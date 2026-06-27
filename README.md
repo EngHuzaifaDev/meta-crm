@@ -1,4 +1,3 @@
-```markdown
 # Lead Doctor
 
 **AI‑Powered Lead Qualification & CRM Platform**
@@ -55,22 +54,22 @@ Lead Doctor is a modern, production‑grade SaaS application that helps you capt
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Framework | Next.js 16 (App Router) |
-| Language | TypeScript (strict) |
-| Styling | Tailwind CSS v4 |
-| UI Library | shadcn/ui |
-| Forms | React Hook Form + Zod |
-| State | Zustand (preferences) |
-| Tables | TanStack Table |
-| Auth | Better Auth (email/password) |
-| AI | Groq SDK (Llama 3.1‑8B‑Instant) |
-| Database | MongoDB (native driver) |
-| Scraping | Playwright (Chromium) |
-| Rate Limiting | In‑memory (extensible to Redis) |
-| Linting | Biome, Husky |
-| Deployment | Docker, Vercel (optional) |
+| Layer          | Technology                         |
+|----------------|------------------------------------|
+| Framework      | Next.js 16 (App Router)            |
+| Language       | TypeScript (strict)                |
+| Styling        | Tailwind CSS v4                    |
+| UI Library     | shadcn/ui                          |
+| Forms          | React Hook Form + Zod              |
+| State          | Zustand (preferences)              |
+| Tables         | TanStack Table                     |
+| Auth           | Better Auth (email/password)       |
+| AI             | Groq SDK (Llama 3.1‑8B‑Instant)    |
+| Database       | MongoDB (native driver)            |
+| Scraping       | Playwright (Chromium)              |
+| Rate Limiting  | In‑memory (extensible to Redis)    |
+| Linting        | Biome, Husky                       |
+| Deployment     | Docker, Vercel (optional)          |
 
 ---
 
@@ -85,55 +84,58 @@ Lead Doctor follows a **colocation‑first architecture**: each feature keeps it
 
 ---
 
-## Project Structure & Module Overview Looks like this
+## Project Structure & Module Overview
 
-```
+
 app/
-├── (auth)/                 # Authentication pages (sign‑in, sign‑up)
-│   └── auth/...
+├── (auth)/ # Authentication pages (sign‑in, sign‑up)
+│ └── auth/...
 ├── dashboard/
-│   ├── layout.tsx          # Dashboard shell (sidebar, theme, etc.)
-│   ├── crm/                # CRM Dashboard
-│   │   ├── page.tsx        # Main dashboard (KPI cards + leads table)
-│   │   ├── _components/
-│   │   │   ├── kpi-cards.tsx
-│   │   │   └── leads-table.tsx
-│   │   └── actions.ts      # getLeadStatsAction, fetchLeadsForDashboard
-│   ├── services/           # Services selection
-│   │   ├── page.tsx
-│   │   ├── _components/
-│   │   │   └── ServiceSelector.tsx
-│   │   └── actions.ts      # add/remove/get user services
-│   ├── leads/              # Lead management
-│   │   ├── new/page.tsx    # Lead creation form
-│   │   ├── [leadId]/page.tsx # Lead detail + AI results + stage dropdown
-│   │   ├── _components/
-│   │   │   ├── NewLeadForm.tsx
-│   │   │   ├── IndustryCombobox.tsx
-│   │   │   ├── LeadAnalysis.tsx
-│   │   │   └── StageDropdown.tsx
-│   │   └── actions.ts      # createLead, getLead, startPipeline, updateStage, etc.
-├── api/                    # (optional API routes – currently unused)
-├── shared/                 # Shared UI components, hooks, utilities
-├── middleware.ts           # Rate limiter, CSP, CORS
-├── layout.tsx              # Root layout (metadata, robots: noindex,nofollow)
+│ ├── layout.tsx # Dashboard shell (sidebar, theme, etc.)
+│ ├── crm/ # CRM Dashboard
+│ │ ├── page.tsx # Main dashboard (KPI cards + leads table)
+│ │ ├── _components/
+│ │ │ ├── kpi-cards.tsx
+│ │ │ └── leads-table.tsx
+│ │ └── actions.ts # getLeadStatsAction, fetchLeadsForDashboard
+│ ├── services/ # Services selection
+│ │ ├── page.tsx
+│ │ ├── _components/
+│ │ │ └── ServiceSelector.tsx
+│ │ └── actions.ts # add/remove/get user services
+│ ├── leads/ # Lead management
+│ │ ├── new/page.tsx # Lead creation form
+│ │ ├── [leadId]/page.tsx # Lead detail + AI results + stage dropdown
+│ │ ├── _components/
+│ │ │ ├── NewLeadForm.tsx
+│ │ │ ├── IndustryCombobox.tsx
+│ │ │ ├── LeadAnalysis.tsx
+│ │ │ └── StageDropdown.tsx
+│ │ └── actions.ts # createLead, getLead, startPipeline, updateStage, etc.
+├── api/ # (optional API routes – currently unused)
+├── shared/ # Shared UI components, hooks, utilities
+├── middleware.ts # Rate limiter, CSP, CORS
+├── layout.tsx # Root layout (metadata, robots: noindex,nofollow)
 └── ...
-```
+
+
+
 
 ### Core Modules Explained
 
-| Module | What it does | Why it exists |
-|--------|--------------|---------------|
-| **Authentication** (`(auth)`) | Sign‑up, login, logout using Better Auth. | Secure access; first user becomes admin (role 0). |
-| **Services** (`services/`) | User selects services they offer from a predefined catalogue. | AI uses selected services to tailor its recommendations. |
-| **Leads** (`leads/`) | Full CRUD for leads, plus AI pipeline triggering. | Central object of the CRM; all qualification revolves around a lead. |
-| **Pipeline** (`server/ai-integration/aiService.ts`) | Scrapes website, calls Groq, saves results. | Automates the heavy lifting of lead research. |
-| **Dashboard** (`crm/`) | KPI metrics and leads table. | Gives a bird’s‑eye view of pipeline health. |
-| **Middleware** (`middleware.ts`) | Rate limiting, security headers, CORS. | Protects the app from abuse and common web vulnerabilities. |
-| **Config** (`lib/config/`) | Industries, services, employee ranges, etc. | Single source of truth for static options. |
-| **DB Utils** (`lib/db/utils/`) | MongoDB helpers for users, leads, pipeline status. | Data access layer – keeps server actions clean. |
+| Module                | What it does                                                                        | Why it exists                                                                        |
+|-----------------------|-------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
+| **Authentication**    | Sign‑up, login, logout using Better Auth.                                           | Secure access; first user becomes admin (role 0).                                    |
+| **Services**          | User selects services they offer from a predefined catalogue.                       | AI uses selected services to tailor its recommendations.                              |
+| **Leads**             | Full CRUD for leads, plus AI pipeline triggering.                                   | Central object of the CRM; all qualification revolves around a lead.                  |
+| **Pipeline**          | Scrapes website, calls Groq, saves results.                                         | Automates the heavy lifting of lead research.                                         |
+| **Dashboard**         | KPI metrics and leads table.                                                        | Gives a bird’s‑eye view of pipeline health.                                           |
+| **Middleware**        | Rate limiting, security headers, CORS.                                              | Protects the app from abuse and common web vulnerabilities.                           |
+| **Config**            | Industries, services, employee ranges, etc.                                         | Single source of truth for static options.                                            |
+| **DB Utils**          | MongoDB helpers for users, leads, pipeline status.                                  | Data access layer – keeps server actions clean.                                       |
 
 ---
+
 
 ## Getting Started
 
@@ -254,7 +256,7 @@ The project includes a production‑ready **Dockerfile** that builds a standalon
 
 1. Run it:
    ```bash
-   docker compose up 
+   docker compose up
    ```
 
 You can also deploy to any platform that supports Docker (Fly.io, Railway, AWS ECS, etc.) or directly to Vercel (without Chromium – scraping will fail unless you use an external service).
