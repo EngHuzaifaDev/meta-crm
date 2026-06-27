@@ -268,4 +268,3 @@ MIT © 2025 Lead Doctor. Built with passion and a lot of AI.
 ---
 
 **Now go qualify some leads! 🚀**
-```
