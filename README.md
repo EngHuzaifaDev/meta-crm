@@ -86,7 +86,7 @@ Lead Doctor follows a **colocation‑first architecture**: each feature keeps it
 
 ## Project Structure & Module Overview
 
-
+```
 app/
 ├── (auth)/ # Authentication pages (sign‑in, sign‑up)
 │ └── auth/...
@@ -117,7 +117,7 @@ app/
 ├── middleware.ts # Rate limiter, CSP, CORS
 ├── layout.tsx # Root layout (metadata, robots: noindex,nofollow)
 └── ...
-
+```
 
 
 
