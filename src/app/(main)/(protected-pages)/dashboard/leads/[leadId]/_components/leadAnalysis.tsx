@@ -293,7 +293,7 @@ export function LeadAnalysis({ lead }: Props) {
                   <CheckCircle2Icon className="h-5 w-5 text-green-500" />
                   AI Evaluation Complete
                 </CardTitle>
-                <span className="text-2xl font-bold">{leadData.score}/100</span>
+                <span className="text-2xl font-bold">{leadData.score}/10</span>
               </CardHeader>
               <CardContent className="space-y-6">
                 {leadData.summary && (
