@@ -54,8 +54,11 @@ export async function deleteCredentialAction(id: string) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session || session.user.role !== 0) return { error: "Unauthorized" };
 
-  const { mongodbInstance } = await import("@/lib/db/mongodb");
-  await mongodbInstance.collection("instagramCredentials").deleteOne({ _id: id as any });
+  const [{ mongodbInstance }, { ObjectId }] = await Promise.all([
+    import("@/lib/db/mongodb"),
+    import("mongodb"),
+  ]);
+  await mongodbInstance.collection("instagramCredentials").deleteOne({ _id: new ObjectId(id) as any });
 
   return { success: true };
 }

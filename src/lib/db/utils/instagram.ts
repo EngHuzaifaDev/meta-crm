@@ -1,4 +1,4 @@
-import type { ObjectId } from "mongodb";
+import { ObjectId } from "mongodb";
 
 import { mongodbInstance } from "@/lib/db/mongodb";
 
@@ -58,8 +58,12 @@ export async function getActiveCredentials(): Promise<InstagramCredential[]> {
   return credentialsCol.find({ isActive: true }).toArray();
 }
 
+function toObjectId(id: string) {
+  try { return new ObjectId(id); } catch { return id; }
+}
+
 export async function getCredentialById(id: string): Promise<InstagramCredential | null> {
-  return credentialsCol.findOne({ _id: id as any });
+  return credentialsCol.findOne({ _id: toObjectId(id) as any });
 }
 
 export async function saveSession(
@@ -67,14 +71,14 @@ export async function saveSession(
   session: SessionData,
 ): Promise<void> {
   await credentialsCol.updateOne(
-    { _id: credentialId as any },
+    { _id: toObjectId(credentialId) as any },
     { $set: { session, updatedAt: new Date() } },
   );
 }
 
 export async function clearSession(credentialId: string): Promise<void> {
   await credentialsCol.updateOne(
-    { _id: credentialId as any },
+    { _id: toObjectId(credentialId) as any },
     { $unset: { session: "" }, $set: { updatedAt: new Date() } },
   );
 }
