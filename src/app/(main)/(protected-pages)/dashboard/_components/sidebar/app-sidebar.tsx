@@ -3,6 +3,7 @@
 import Link from "next/link";
 
 import { Command } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 
 import {
   Sidebar,
@@ -21,11 +22,13 @@ import { NavMain } from "./nav-main";
 import { NavUser } from "./nav-user";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const { sidebarVariant, sidebarCollapsible, isSynced } = usePreferencesStore((s) => ({
-    sidebarVariant: s.sidebarVariant,
-    sidebarCollapsible: s.sidebarCollapsible,
-    isSynced: s.isSynced,
-  }));
+  const { sidebarVariant, sidebarCollapsible, isSynced } = usePreferencesStore(
+    useShallow((s) => ({
+      sidebarVariant: s.sidebarVariant,
+      sidebarCollapsible: s.sidebarCollapsible,
+      isSynced: s.isSynced,
+    })),
+  );
 
   const variant = isSynced ? sidebarVariant : props.variant;
   const collapsible = isSynced ? sidebarCollapsible : props.collapsible;
