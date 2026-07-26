@@ -25,13 +25,15 @@ actions:
   - id: clickLoginButton
     action: javascript
     script: |
-      const btn = document.querySelector('[type="submit"]');
-      if (btn) { btn.click(); return; }
       const spans = document.querySelectorAll('span');
       for (const s of spans) {
         if (s.textContent.trim() === 'Log in') {
-          const parent = s.closest('[role="button"], button, div[role="none"]');
-          if (parent) { parent.click(); return; }
+          let el = s.parentElement;
+          while (el) {
+            const overlay = el.querySelector('[data-visualcompletion="ignore"]');
+            if (overlay && overlay !== el) { el.click(); return; }
+            el = el.parentElement;
+          }
         }
       }
       document.querySelector('form')?.requestSubmit();
