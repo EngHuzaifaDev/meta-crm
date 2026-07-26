@@ -1,0 +1,29 @@
+name: instagram-followers
+description: Open followers dialog and extract follower list
+actions:
+  - id: clickFollowersButton
+    action: click
+    selector: "//a[contains(@href, '/followers/')]"
+    waitAfter: 2000
+
+  - id: waitForFollowersDialog
+    action: wait
+    selector: "div[role='dialog']"
+    timeout: 10000
+
+  - id: scrollAndExtract
+    action: repeat
+    maxIterations: 20
+    actions:
+      - id: extractVisibleFollowers
+        action: extractList
+        selector: "//div[@role='dialog']//a[contains(@href, '/') and not(contains(@href, '/followers/'))]//span//span"
+        waitAfter: 500
+      - id: scrollDialog
+        action: scrollToBottom
+        selector: "div[role='dialog']"
+        waitAfter: 1500
+
+  - id: finalExtract
+    action: extractList
+    selector: "//div[@role='dialog']//a[contains(@href, '/') and not(contains(@href, '/followers/'))]//span//span"

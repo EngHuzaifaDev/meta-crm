@@ -28,20 +28,15 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile.dev
-    container_name: metaCRM-app-dev
+      dockerfile: Dockerfile.prod
+    container_name: metaCRM-app-prod
     ports:
       - "3000:3000"
     env_file:
-      - .env.local
+      - .env.production
     environment:
-      - NODE_ENV=development
-      - WATCHPACK_POLLING=true
+      - NODE_ENV=production
       - SELENIUM_GRID_URL=http://selenium-hub:4444
-    volumes:
-      - .:/app
-      - /app/node_modules
-      - /app/.next
     depends_on:
       - selenium-hub
     restart: unless-stopped

@@ -1,0 +1,17 @@
+name: instagram-reels
+description: Navigate to reels and engage (like)
+actions:
+  - id: navigateToReels
+    action: navigate
+    url: "https://www.instagram.com/reels/"
+    waitAfter: 3000
+
+  - id: waitForReel
+    action: wait
+    selector: "article"
+    timeout: 10000
+
+  - id: likeFirstReel
+    action: click
+    selector: "//span[@role='button' and .//svg[@aria-label='Like']]"
+    waitAfter: 2000

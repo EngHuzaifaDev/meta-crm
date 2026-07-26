@@ -1,0 +1,64 @@
+name: instagram-login
+description: Login to Instagram with 2FA handling
+baseUrl: "https://www.instagram.com"
+actions:
+  - id: navigateToLogin
+    action: navigate
+    url: "https://www.instagram.com/accounts/login/"
+    waitAfter: 2000
+
+  - id: waitForLoginForm
+    action: wait
+    selector: "input[name='username']"
+    timeout: 15000
+
+  - id: fillUsername
+    action: type
+    selector: "input[name='username']"
+    value: "{credentials.username}"
+    focus: true
+    clear: true
+
+  - id: fillPassword
+    action: type
+    selector: "input[name='password']"
+    value: "{credentials.password}"
+    focus: true
+    clear: true
+
+  - id: clickLoginButton
+    action: click
+    selector: "button[type='submit']"
+    waitAfter: 3000
+
+  - id: handleVerificationCode
+    action: ifExists
+    selector: "input[name='verificationCode']"
+    timeout: 4000
+    then:
+      - id: fillVerificationCode
+        action: type
+        selector: "input[name='verificationCode']"
+        value: "{credentials.verificationCode}"
+        focus: true
+        clear: true
+        waitAfter: 1000
+      - id: clickVerify
+        action: click
+        selector: "button[type='submit']"
+        waitAfter: 3000
+
+  - id: dismissSaveInfo
+    action: clickIfExists
+    selector: "//div[@role='button' and contains(text(), 'Not now')]"
+    waitAfter: 1500
+
+  - id: dismissNotifications
+    action: clickIfExists
+    selector: "//button[contains(text(), 'Not Now')]"
+    waitAfter: 1500
+
+  - id: waitForFeed
+    action: wait
+    selector: "section main"
+    timeout: 15000
