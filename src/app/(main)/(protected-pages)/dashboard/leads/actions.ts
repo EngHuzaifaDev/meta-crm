@@ -11,7 +11,7 @@ import {
 } from "@/lib/db/utils/lead";
 import { revalidatePath } from "next/cache";
 import { INDUSTRIES } from "@/config/industries";
-import { startLeadPipeline } from "@/server/ai-integration/aiService";
+import { startLeadPipeline } from "@/server/meta-api/aiService";
 import { getPipelineStatusByLeadId } from "@/lib/db/utils/pipeline";
 import { normalizeDoc } from "@/server/utils";
 
