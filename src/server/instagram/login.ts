@@ -57,12 +57,9 @@ export async function loginToInstagram(
   try {
     await engine.execute(definition);
   } catch (error: any) {
-    if (error.message?.includes('verificationCode')) {
-      return {
-        success: false,
-        needs2FA: true,
-        error: '2FA code required',
-      };
+    const currentUrl = await driver.getCurrentUrl();
+    if (currentUrl.includes('/challenge')) {
+      return { success: false, needs2FA: true, error: '2FA code required' };
     }
     return {
       success: false,
