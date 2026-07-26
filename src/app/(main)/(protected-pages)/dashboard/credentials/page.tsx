@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Clock, Loader2, LogOut, Plus, Trash2 } from "lucide-react";
+import { Clock, Loader2, LogOut, Play, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,12 +85,38 @@ export default function CredentialsPage() {
     }
   };
 
+  const [testingId, setTestingId] = useState<string | null>(null);
+
   const clearSession = async (id: string) => {
     try {
       await fetch(`/api/instagram/session?id=${id}`, { method: "DELETE" });
       await load();
     } catch {
       // ignore
+    }
+  };
+
+  const testLogin = async (id: string) => {
+    setTestingId(id);
+    try {
+      const res = await fetch("/api/instagram/test-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credentialId: id }),
+      });
+      const data = await res.json();
+      if (data.needs2FA) {
+        alert("2FA code required — test login cannot complete without 2FA. Run extraction with 2FA enabled.");
+      } else if (data.success) {
+        alert("Login successful! Session saved.");
+        await load();
+      } else {
+        alert(`Login failed: ${data.error || data.message || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -176,6 +202,19 @@ export default function CredentialsPage() {
                       </div>
                     </div>
                     <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => testLogin(cred._id)}
+                        disabled={testingId === cred._id}
+                        title="Test login"
+                      >
+                        {testingId === cred._id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Play className="h-4 w-4 text-green-600" />
+                        )}
+                      </Button>
                       {cred.session && (
                         <Button variant="ghost" size="icon" onClick={() => clearSession(cred._id)} title="Clear session">
                           <LogOut className="h-4 w-4" />
