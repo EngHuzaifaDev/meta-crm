@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AlertCircle, Clock, Loader2, LogOut, Play, Plus, ShieldAlert, Trash2, X } from "lucide-react";
 
@@ -9,8 +9,9 @@ import {
   addCredentialAction,
   deleteCredentialAction,
   clearSessionAction,
-  testLoginAction,
-  completeLoginAction,
+  startTestLoginAction,
+  pollTestLoginAction,
+  resolve2FAAction,
 } from "@/server/instagram/actions";
 
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +60,8 @@ export default function CredentialsPage() {
   const [twoFAError, setTwoFAError] = useState<string | null>(null);
 
   const [loginResult, setLoginResult] = useState<{ id: string; type: "success" | "error"; message: string } | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const testRunIdRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setCreds(await getCredentialsAction());
@@ -96,18 +99,30 @@ export default function CredentialsPage() {
   const testLogin = async (id: string) => {
     setTestingId(id);
     setLoginResult(null);
-    const data = await testLoginAction(id);
-    if (data.needs2FA) {
-      setTwoFACredentialId(id);
-      setTwoFACode("");
-      setTwoFAError(null);
-      setShow2FA(true);
-    } else if (data.success) {
-      setLoginResult({ id, type: "success", message: "Login successful — session saved" });
-      await load();
-    } else {
-      setLoginResult({ id, type: "error", message: data.error || data.message || "Unknown error" });
-    }
+    const { runId } = await startTestLoginAction(id);
+    if (!runId) { setTestingId(null); return; }
+    testRunIdRef.current = runId;
+
+    pollRef.current = setInterval(async () => {
+      const state = await pollTestLoginAction(runId);
+      if (!state) { clearInterval(pollRef.current!); setTestingId(null); return; }
+      const last = state.lastEvent;
+      if (!last) return;
+      if (last.type === "2fa_required") {
+        clearInterval(pollRef.current!);
+        setTwoFACredentialId(id);
+        setTwoFACode("");
+        setTwoFAError(null);
+        setShow2FA(true);
+      } else if (last.type === "done") {
+        clearInterval(pollRef.current!);
+        setLoginResult({ id, type: "success", message: "Login successful — session saved" });
+        await load();
+      } else if (last.type === "error") {
+        clearInterval(pollRef.current!);
+        setLoginResult({ id, type: "error", message: last.error || "Login failed" });
+      }
+    }, 1000);
     setTestingId(null);
   };
 
@@ -115,13 +130,29 @@ export default function CredentialsPage() {
     if (!twoFACredentialId || !twoFACode.trim()) return;
     setSubmitting2FA(true);
     setTwoFAError(null);
-    const result = await completeLoginAction(twoFACredentialId, twoFACode.trim());
-    if (result.success) {
+    const resolved = await resolve2FAAction(twoFACredentialId, twoFACode.trim());
+    if (resolved.success) {
       setShow2FA(false);
-      setLoginResult({ id: twoFACredentialId, type: "success", message: "Login successful — session saved" });
-      await load();
+      setLoginResult({ id: twoFACredentialId, type: "success", message: "Code submitted — completing login..." });
+      const runId = testRunIdRef.current;
+      if (runId) {
+        pollRef.current = setInterval(async () => {
+          const state = await pollTestLoginAction(runId);
+          if (!state) { clearInterval(pollRef.current!); return; }
+          const last = state.lastEvent;
+          if (!last) return;
+          if (last.type === "done") {
+            clearInterval(pollRef.current!);
+            setLoginResult({ id: twoFACredentialId, type: "success", message: "Login successful — session saved" });
+            await load();
+          } else if (last.type === "error") {
+            clearInterval(pollRef.current!);
+            setLoginResult({ id: twoFACredentialId, type: "error", message: last.error || "Login failed" });
+          }
+        }, 1000);
+      }
     } else {
-      setTwoFAError(result.error || "Failed to verify code");
+      setTwoFAError("Failed to submit verification code");
     }
     setSubmitting2FA(false);
   };

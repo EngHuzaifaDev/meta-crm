@@ -71,18 +71,38 @@ export async function clearSessionAction(id: string) {
   return { success: true };
 }
 
-export async function testLoginAction(credentialId: string) {
+export async function startTestLoginAction(credentialId: string) {
   const sesh = await auth.api.getSession({ headers: await headers() });
   if (!sesh || sesh.user.role !== 0) return { success: false, error: "Unauthorized" };
 
   const cred = await getCredentialById(credentialId);
   if (!cred) return { success: false, error: "Credential not found" };
 
+  const { createRun, pushEvent } = await import("./progress-store");
+  const runId = createRun();
+
+  pushEvent(runId, { type: "status", message: "Opening browser..." });
+
+  runTestLoginInBackground(cred, credentialId, runId);
+
+  return { runId };
+}
+
+async function runTestLoginInBackground(
+  cred: any,
+  credentialId: string,
+  runId: string,
+) {
+  const { pushEvent } = await import("./progress-store");
   const { createDriver } = await import("./driver");
   const { loginToInstagram } = await import("./login");
+  const { createChallenge } = await import("./challenges");
+  const { default: { By, until } } = await import("selenium-webdriver");
 
   const driver = await createDriver();
   try {
+    pushEvent(runId, { type: "status", message: "Logging in..." });
+
     const result = await loginToInstagram(driver, {
       username: cred.instagramUsername,
       password: cred.encryptedPassword,
@@ -91,18 +111,56 @@ export async function testLoginAction(credentialId: string) {
     });
 
     if (result.needs2FA) {
-      const { createChallenge } = await import("./challenges");
-      createChallenge(credentialId);
-      return { success: false, needs2FA: true, credentialId, message: "2FA code required" };
+      pushEvent(runId, {
+        type: "2fa_required",
+        credentialId,
+        message: "Verification code required",
+      });
+
+      const code = await createChallenge(credentialId);
+
+      pushEvent(runId, { type: "status", message: "Submitting verification code..." });
+
+      const nativeSet = `const el = arguments[0]; const val = arguments[1];
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+        if (setter) { setter.call(el, val);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true })); }`;
+
+      const focused = await driver.executeScript("return document.activeElement");
+      if (focused) {
+        await driver.executeScript(nativeSet, focused, code);
+        await new Promise((r) => setTimeout(r, 500));
+
+        const spans = await driver.findElements(By.css("span"));
+        for (const s of spans) {
+          const text = await s.getText();
+          if (text.trim() === "Log in") {
+            let parent: any = s;
+            while (true) {
+              const overlay = await parent.findElements(By.css('[data-visualcompletion="ignore"]'));
+              if (overlay.length > 0) { await parent.click(); break; }
+              try { parent = await parent.findElement(By.xpath("..")); } catch { break; }
+            }
+            break;
+          }
+        }
+
+        await driver.wait(until.elementLocated(By.css("section main")), 20000);
+        pushEvent(runId, { type: "done", message: "Login successful — session saved" });
+      } else {
+        pushEvent(runId, { type: "error", error: "No focused element for 2FA code" });
+      }
+      return;
     }
 
-    return {
-      success: result.success,
-      message: result.success ? "Login successful — session saved" : result.error,
-      error: result.error,
-    };
+    if (result.success) {
+      pushEvent(runId, { type: "done", message: "Login successful — session saved" });
+    } else {
+      pushEvent(runId, { type: "error", error: result.error || "Login failed" });
+    }
   } catch (error: any) {
-    return { success: false, error: error.message };
+    pushEvent(runId, { type: "error", error: error.message || "Unknown error" });
   } finally {
     await driver.quit();
   }
@@ -186,6 +244,11 @@ export async function pollExtractionAction(runId: string) {
     progress: state.progress,
     lastEvent: state.lastEvent,
   };
+}
+
+export async function pollTestLoginAction(runId: string) {
+  const { getRunState } = await import("./progress-store");
+  return getRunState(runId);
 }
 
 export async function stopExtractionAction(runId: string) {
