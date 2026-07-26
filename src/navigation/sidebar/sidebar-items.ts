@@ -10,6 +10,7 @@ export interface NavSubItem {
   badge?: NavBadge;
   disabled?: boolean;
   newTab?: boolean;
+  requiredRole?: number;
 }
 
 interface NavItemBase {
@@ -19,6 +20,7 @@ interface NavItemBase {
   badge?: NavBadge;
   disabled?: boolean;
   newTab?: boolean;
+  requiredRole?: number;
 }
 
 export interface NavMainLinkItem extends NavItemBase {
@@ -54,6 +56,7 @@ export const sidebarItems: NavGroup[] = [
         title: "Credentials",
         url: "/dashboard/credentials",
         icon: KeyRound,
+        requiredRole: 0,
       },
     ],
   },

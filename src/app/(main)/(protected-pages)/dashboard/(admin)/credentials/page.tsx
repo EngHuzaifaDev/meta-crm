@@ -1,8 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { Clock, Loader2, LogOut, Play, Plus, Trash2 } from "lucide-react";
+
+import {
+  getCredentialsAction,
+  addCredentialAction,
+  deleteCredentialAction,
+  clearSessionAction,
+  testLoginAction,
+} from "@/server/instagram/actions";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +20,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 interface SessionInfo {
-  savedAt: string;
-  expiresAt?: string;
+  savedAt: Date | string;
+  expiresAt?: Date | string;
   userAgent?: string;
 }
 
@@ -20,11 +29,11 @@ interface Credential {
   _id: string;
   instagramUsername: string;
   isActive: boolean;
-  createdAt: string;
+  createdAt: Date | string;
   session: SessionInfo | null;
 }
 
-function formatExpiry(expiresAt?: string): { label: string; variant: "default" | "secondary" | "destructive" } {
+function formatExpiry(expiresAt?: Date | string): { label: string; variant: "default" | "secondary" | "destructive" } {
   if (!expiresAt) return { label: "No session", variant: "secondary" };
   const diff = new Date(expiresAt).getTime() - Date.now();
   if (diff <= 0) return { label: "Expired", variant: "destructive" };
@@ -42,82 +51,52 @@ export default function CredentialsPage() {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/instagram/credentials");
-      if (res.ok) setCreds(await res.json());
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
+    setCreds(await getCredentialsAction());
+    setLoading(false);
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   const addCredential = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !password.trim()) return;
     setSaving(true);
-    try {
-      const res = await fetch("/api/instagram/credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instagramUsername: username.trim(), password }),
-      });
-      if (res.ok) {
-        setUsername("");
-        setPassword("");
-        await load();
-      }
-    } finally {
-      setSaving(false);
+    const fd = new FormData();
+    fd.set("instagramUsername", username.trim());
+    fd.set("password", password);
+    const result = await addCredentialAction(fd);
+    if (result.success) {
+      setUsername("");
+      setPassword("");
+      await load();
     }
+    setSaving(false);
   };
 
   const deleteCredential = async (id: string) => {
-    try {
-      await fetch(`/api/instagram/credentials?id=${id}`, { method: "DELETE" });
-      await load();
-    } catch {
-      // ignore
-    }
+    await deleteCredentialAction(id);
+    await load();
   };
 
   const [testingId, setTestingId] = useState<string | null>(null);
 
   const clearSession = async (id: string) => {
-    try {
-      await fetch(`/api/instagram/session?id=${id}`, { method: "DELETE" });
-      await load();
-    } catch {
-      // ignore
-    }
+    await clearSessionAction(id);
+    await load();
   };
 
   const testLogin = async (id: string) => {
     setTestingId(id);
-    try {
-      const res = await fetch("/api/instagram/test-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credentialId: id }),
-      });
-      const data = await res.json();
-      if (data.needs2FA) {
-        alert("2FA code required — test login cannot complete without 2FA. Run extraction with 2FA enabled.");
-      } else if (data.success) {
-        alert("Login successful! Session saved.");
-        await load();
-      } else {
-        alert(`Login failed: ${data.error || data.message || "Unknown error"}`);
-      }
-    } catch (err: any) {
-      alert(`Error: ${err.message}`);
-    } finally {
-      setTestingId(null);
+    const data = await testLoginAction(id);
+    if (data.needs2FA) {
+      alert("2FA code required — run extraction with 2FA enabled.");
+    } else if (data.success) {
+      alert("Login successful! Session saved.");
+      await load();
+    } else {
+      alert(`Login failed: ${data.error || data.message || "Unknown error"}`);
     }
+    setTestingId(null);
   };
 
   return (

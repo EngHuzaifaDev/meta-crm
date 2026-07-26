@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   AlertCircle,
@@ -19,6 +19,13 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+
+import {
+  startExtractionAction,
+  pollExtractionAction,
+  stopExtractionAction,
+  resolve2FAAction,
+} from "@/server/instagram/actions";
 
 interface ProgressEvent {
   type: "status" | "follower" | "invalid" | "duplicate" | "done" | "error" | "2fa_required";
@@ -51,78 +58,64 @@ export default function ExtractorPage() {
   const [pendingCredentialId, setPendingCredentialId] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState("");
   const [submitting2FA, setSubmitting2FA] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
-  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const runIdRef = useRef<string | null>(null);
 
-  const handleSSEStream = useCallback(async (
-    response: Response,
-    controller: AbortController,
-  ) => {
-    const reader = response.body?.getReader();
-    if (!reader) {
-      setError("No response stream");
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  const poll = useCallback(async (runId: string) => {
+    const state = await pollExtractionAction(runId);
+    if (!state || state.status === "not_found") {
+      setStatus("Run not found");
       setRunning(false);
+      if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
-    readerRef.current = reader;
 
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const last = state.lastEvent;
+    if (!last) return;
 
-    while (true) {
-      const { done: streamDone, value } = await reader.read();
-      if (streamDone) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const event: ProgressEvent = JSON.parse(line.slice(6));
-
-            switch (event.type) {
-              case "status":
-                setStatus(event.message || null);
-                setProcessedCount(event.processedCount ?? 0);
-                setTotalCount(event.totalCount ?? 0);
-                break;
-              case "follower":
-                setFollowers((prev) => [...prev, event.followerUsername!]);
-                setTotalFollowers(event.totalFollowers ?? 0);
-                setDuplicateCount(event.duplicateCount ?? 0);
-                setInvalidCount(event.invalidCount ?? 0);
-                setProcessedCount(event.processedCount ?? 0);
-                setTotalCount(event.totalCount ?? 0);
-                break;
-              case "invalid":
-                setInvalidCount(event.invalidCount ?? 0);
-                setProcessedCount(event.processedCount ?? 0);
-                break;
-              case "duplicate":
-                setDuplicateCount(event.duplicateCount ?? 0);
-                break;
-              case "2fa_required":
-                setShow2FA(true);
-                setPendingCredentialId(event.credentialId || null);
-                setStatus("Verification code required. Check your email or authenticator app.");
-                break;
-              case "done":
-                setStatus("Extraction complete");
-                setDone(true);
-                setRunning(false);
-                break;
-              case "error":
-                setError(event.error || "Unknown error");
-                setRunning(false);
-                break;
-            }
-          } catch {
-            // skip malformed
-          }
-        }
-      }
+    switch (last.type) {
+      case "status":
+        setStatus(last.message || null);
+        setProcessedCount(last.processedCount ?? 0);
+        setTotalCount(last.totalCount ?? 0);
+        break;
+      case "follower":
+        setFollowers((prev) => [...prev, last.followerUsername!]);
+        setTotalFollowers(last.totalFollowers ?? 0);
+        setDuplicateCount(last.duplicateCount ?? 0);
+        setInvalidCount(last.invalidCount ?? 0);
+        setProcessedCount(last.processedCount ?? 0);
+        setTotalCount(last.totalCount ?? 0);
+        break;
+      case "invalid":
+        setInvalidCount(last.invalidCount ?? 0);
+        setProcessedCount(last.processedCount ?? 0);
+        break;
+      case "duplicate":
+        setDuplicateCount(last.duplicateCount ?? 0);
+        break;
+      case "2fa_required":
+        setShow2FA(true);
+        setPendingCredentialId(last.credentialId || null);
+        setStatus("Verification code required.");
+        break;
+      case "done":
+        setStatus("Extraction complete");
+        setDone(true);
+        setRunning(false);
+        if (pollRef.current) clearInterval(pollRef.current);
+        break;
+      case "error":
+        setError(last.error || "Unknown error");
+        setRunning(false);
+        if (pollRef.current) clearInterval(pollRef.current);
+        break;
     }
   }, []);
 
@@ -145,65 +138,37 @@ export default function ExtractorPage() {
     setTotalCount(list.length);
     setStatus("Starting...");
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const response = await fetch("/api/instagram/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernames: list }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const err = await response.json();
-        setError(err.error || "Request failed");
-        setRunning(false);
-        return;
-      }
-
-      await handleSSEStream(response, controller);
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        setError(err.message || "Connection error");
-      }
-    } finally {
+    const result = await startExtractionAction("", list);
+    if (result.error) {
+      setError(result.error);
       setRunning(false);
-      readerRef.current = null;
+      return;
     }
-  }, [usernames, handleSSEStream]);
+    const runId = result.runId!;
+    runIdRef.current = runId;
+
+    pollRef.current = setInterval(() => poll(runId), 1500);
+  }, [usernames, poll]);
 
   const submit2FA = useCallback(async () => {
     if (!pendingCredentialId || !verificationCode.trim()) return;
     setSubmitting2FA(true);
-    try {
-      const res = await fetch("/api/instagram/verify-2fa", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          credentialId: pendingCredentialId,
-          code: verificationCode.trim(),
-        }),
-      });
-      if (res.ok) {
-        setShow2FA(false);
-        setVerificationCode("");
-        setStatus("Verification code submitted — resuming...");
-      } else {
-        const err = await res.json();
-        setError(err.error || "Failed to submit code");
-      }
-    } catch {
+    const result = await resolve2FAAction(pendingCredentialId, verificationCode.trim());
+    if (result.success) {
+      setShow2FA(false);
+      setVerificationCode("");
+      setStatus("Verification code submitted — resuming...");
+    } else {
       setError("Failed to submit verification code");
-    } finally {
-      setSubmitting2FA(false);
     }
+    setSubmitting2FA(false);
   }, [pendingCredentialId, verificationCode]);
 
   const stopExtraction = useCallback(async () => {
-    abortRef.current?.abort();
-    readerRef.current?.cancel();
+    if (runIdRef.current) {
+      await stopExtractionAction(runIdRef.current);
+    }
+    if (pollRef.current) clearInterval(pollRef.current);
     setRunning(false);
     setStatus("Stopped");
   }, []);

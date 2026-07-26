@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { useSession } from "@/lib/auth-client";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,6 +54,24 @@ function hasSubItems(item: NavMainItem): item is NavMainParentItem {
 
 export function NavMain({ items }: NavMainProps) {
   const path = usePathname();
+  const { data: session } = useSession();
+  const userRole = (session?.user as any)?.role ?? 1;
+
+  const filteredGroups = items
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.requiredRole !== undefined && item.requiredRole !== userRole) return false;
+        if (item.subItems) {
+          return item.subItems.some((sub) => {
+            if (sub.requiredRole !== undefined && sub.requiredRole !== userRole) return false;
+            return true;
+          });
+        }
+        return true;
+      }),
+    }))
+    .filter((group) => group.items.length > 0);
 
   const isItemActive = (item: NavMainItem) => {
     if (hasSubItems(item)) {
@@ -69,7 +88,7 @@ export function NavMain({ items }: NavMainProps) {
 
   return (
     <>
-      {items.map((group) => (
+      {filteredGroups.map((group) => (
         <SidebarGroup key={group.id}>
           {group.label && (
             <SidebarGroupLabel className="group-data-[collapsible=icon]:pointer-events-none">

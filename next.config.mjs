@@ -5,7 +5,7 @@ const nextConfig = {
   compiler: {
     removeConsole: process.env.NODE_ENV === "production",
   },
-  serverExternalPackages: ["selenium-webdriver"],
+  // selenium-webdriver is dynamically imported and never bundled with client code
 };
 
 export default nextConfig;
