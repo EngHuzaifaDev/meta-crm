@@ -83,7 +83,6 @@ export class ScrapingEngine {
       case "wait": {
         if (action.selector) {
           await this.driver.wait(until.elementLocated(toBy(action.selector)), action.timeout || 10000);
-          await this.driver.wait(until.elementIsVisible(await this.driver.findElement(toBy(action.selector))), 5000);
         }
         break;
       }
@@ -94,26 +93,21 @@ export class ScrapingEngine {
       }
 
       case "type": {
-        const el = await this.waitForEl(action.selector!, action.timeout);
+        const el = await this.driver.wait(until.elementLocated(toBy(action.selector!)), action.timeout || 10000);
         const value = interpolate(action.value || "", this.ctx);
         await this.driver.executeScript(
-          `const el = arguments[0];
-           const val = arguments[1];
-           el.focus();
-           if (arguments[2]) el.value = '';
+          `const el = arguments[0], val = arguments[1];
            el.value = val;
            el.dispatchEvent(new Event('input', { bubbles: true }));
            el.dispatchEvent(new Event('change', { bubbles: true }));`,
-          el, value, action.clear,
+          el, value,
         );
-        await humanDelay(400, 800);
+        await humanDelay(300, 600);
         break;
       }
 
       case "click": {
-        const el = await this.waitForEl(action.selector!, action.timeout);
-        await this.driver.wait(until.elementIsVisible(el), 5000);
-        await this.driver.wait(until.elementIsEnabled(el), 5000);
+        const el = await this.driver.wait(until.elementLocated(toBy(action.selector!)), action.timeout || 10000);
         await humanDelay(200, 500);
         await el.click();
         break;
@@ -195,8 +189,6 @@ export class ScrapingEngine {
   }
 
   private async waitForEl(selector: string, timeout?: number) {
-    const el = await this.driver.wait(until.elementLocated(toBy(selector)), timeout || 10000);
-    await this.driver.wait(until.elementIsVisible(el), 5000);
-    return el;
+    return this.driver.wait(until.elementLocated(toBy(selector)), timeout || 10000);
   }
 }
