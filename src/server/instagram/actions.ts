@@ -91,7 +91,44 @@ export async function testLoginAction(credentialId: string) {
     });
 
     if (result.needs2FA) {
-      return { success: false, needs2FA: true, message: "2FA code required" };
+      const { createChallenge } = await import("./challenges");
+      createChallenge(credentialId);
+      return { success: false, needs2FA: true, credentialId, message: "2FA code required" };
+    }
+
+    return {
+      success: result.success,
+      message: result.success ? "Login successful — session saved" : result.error,
+      error: result.error,
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  } finally {
+    await driver.quit();
+  }
+}
+
+export async function completeLoginAction(credentialId: string, code: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { success: false, error: "Unauthorized" };
+
+  const cred = await getCredentialById(credentialId);
+  if (!cred) return { success: false, error: "Credential not found" };
+
+  const { createDriver } = await import("./driver");
+  const { loginToInstagram } = await import("./login");
+
+  const driver = await createDriver();
+  try {
+    const result = await loginToInstagram(driver, {
+      username: cred.instagramUsername,
+      password: cred.encryptedPassword,
+      verificationCode: code,
+      credentialId,
+    });
+
+    if (result.needs2FA) {
+      return { success: false, error: "2FA code was incorrect or expired" };
     }
 
     return {

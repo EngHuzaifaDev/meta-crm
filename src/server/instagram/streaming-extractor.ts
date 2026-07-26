@@ -3,6 +3,7 @@ import { loginToInstagram } from "./login";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
 import { upsertFollower, updateTargetProfileScraped } from "@/lib/db/utils/instagram";
+import { createChallenge } from "./challenges";
 import path from "node:path";
 
 const ACTIONS_DIR = path.resolve(process.cwd(), "src/server/instagram/actions");
@@ -69,11 +70,37 @@ export async function extractFollowersStream(
     });
 
     if (loginResult.needs2FA) {
-      await onProgress({ type: "error", error: "2FA required — login failed" });
-      return;
-    }
+      await onProgress({
+        type: "2fa_required",
+        credentialId: options.credentialId,
+        message: "Verification code required. Check your email or authenticator app.",
+      });
 
-    if (!loginResult.success) {
+      if (!options.credentialId) {
+        await onProgress({ type: "error", error: "No credential ID for 2FA challenge" });
+        return;
+      }
+
+      try {
+        const code = await createChallenge(options.credentialId);
+        options.credentials.verificationCode = code;
+
+        const retryResult = await loginToInstagram(driver, {
+          username: options.credentials.username,
+          password: options.credentials.password,
+          verificationCode: code,
+          credentialId: options.credentialId,
+        });
+
+        if (!retryResult.success) {
+          await onProgress({ type: "error", error: `2FA login failed: ${retryResult.error}` });
+          return;
+        }
+      } catch {
+        await onProgress({ type: "error", error: "2FA challenge timed out" });
+        return;
+      }
+    } else if (!loginResult.success) {
       await onProgress({ type: "error", error: `Login failed: ${loginResult.error}` });
       return;
     }

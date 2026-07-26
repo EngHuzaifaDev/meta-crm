@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
-import { Clock, Loader2, LogOut, Play, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Clock, Loader2, LogOut, Play, Plus, ShieldAlert, Trash2, X } from "lucide-react";
 
 import {
   getCredentialsAction,
@@ -11,11 +10,13 @@ import {
   deleteCredentialAction,
   clearSessionAction,
   testLoginAction,
+  completeLoginAction,
 } from "@/server/instagram/actions";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -49,6 +50,15 @@ export default function CredentialsPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  const [show2FA, setShow2FA] = useState(false);
+  const [twoFACredentialId, setTwoFACredentialId] = useState<string | null>(null);
+  const [twoFACode, setTwoFACode] = useState("");
+  const [submitting2FA, setSubmitting2FA] = useState(false);
+  const [twoFAError, setTwoFAError] = useState<string | null>(null);
+
+  const [loginResult, setLoginResult] = useState<{ id: string; type: "success" | "error"; message: string } | null>(null);
 
   const load = useCallback(async () => {
     setCreds(await getCredentialsAction());
@@ -78,8 +88,6 @@ export default function CredentialsPage() {
     await load();
   };
 
-  const [testingId, setTestingId] = useState<string | null>(null);
-
   const clearSession = async (id: string) => {
     await clearSessionAction(id);
     await load();
@@ -87,16 +95,35 @@ export default function CredentialsPage() {
 
   const testLogin = async (id: string) => {
     setTestingId(id);
+    setLoginResult(null);
     const data = await testLoginAction(id);
     if (data.needs2FA) {
-      alert("2FA code required — run extraction with 2FA enabled.");
+      setTwoFACredentialId(id);
+      setTwoFACode("");
+      setTwoFAError(null);
+      setShow2FA(true);
     } else if (data.success) {
-      alert("Login successful! Session saved.");
+      setLoginResult({ id, type: "success", message: "Login successful — session saved" });
       await load();
     } else {
-      alert(`Login failed: ${data.error || data.message || "Unknown error"}`);
+      setLoginResult({ id, type: "error", message: data.error || data.message || "Unknown error" });
     }
     setTestingId(null);
+  };
+
+  const submit2FA = async () => {
+    if (!twoFACredentialId || !twoFACode.trim()) return;
+    setSubmitting2FA(true);
+    setTwoFAError(null);
+    const result = await completeLoginAction(twoFACredentialId, twoFACode.trim());
+    if (result.success) {
+      setShow2FA(false);
+      setLoginResult({ id: twoFACredentialId, type: "success", message: "Login successful — session saved" });
+      await load();
+    } else {
+      setTwoFAError(result.error || "Failed to verify code");
+    }
+    setSubmitting2FA(false);
   };
 
   return (
@@ -105,6 +132,26 @@ export default function CredentialsPage() {
         <h1 className="font-bold text-2xl tracking-tight">Credentials</h1>
         <p className="text-muted-foreground">Manage Instagram accounts used for extraction (admin only)</p>
       </div>
+
+      {loginResult && (
+        <Card className={loginResult.type === "success" ? "border-green-500" : "border-destructive"}>
+          <CardContent className="flex items-center justify-between p-4">
+            <div className="flex items-center gap-2 text-sm">
+              {loginResult.type === "success" ? (
+                <AlertCircle className="h-4 w-4 text-green-600" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-destructive" />
+              )}
+              <span className={loginResult.type === "success" ? "text-green-700" : "text-destructive"}>
+                {loginResult.message}
+              </span>
+            </div>
+            <Button variant="ghost" size="icon" onClick={() => setLoginResult(null)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -210,6 +257,48 @@ export default function CredentialsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={show2FA} onOpenChange={(open) => { if (!open) setShow2FA(false); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-500" /> Verification Code Required
+            </DialogTitle>
+            <DialogDescription>
+              Instagram requires a verification code. Check your email or authenticator app.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="2fa-code">Verification Code</Label>
+              <Input
+                id="2fa-code"
+                value={twoFACode}
+                onChange={(e) => setTwoFACode(e.target.value)}
+                placeholder="000000"
+                maxLength={8}
+                disabled={submitting2FA}
+                autoFocus
+              />
+            </div>
+            {twoFAError && (
+              <p className="text-sm text-destructive">{twoFAError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShow2FA(false)} disabled={submitting2FA}>
+              Cancel
+            </Button>
+            <Button onClick={submit2FA} disabled={submitting2FA || !twoFACode.trim()}>
+              {submitting2FA ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</>
+              ) : (
+                "Submit"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
