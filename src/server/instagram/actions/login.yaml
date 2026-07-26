@@ -9,18 +9,22 @@ actions:
 
   - id: waitForLoginForm
     action: wait
-    selector: "input[name='username']"
+    selector: "input[name='email']"
     timeout: 15000
 
   - id: fillUsername
     action: type
-    selector: "input[name='username']"
+    selector: "input[name='email']"
     value: "{credentials.username}"
+    focus: true
+    clear: true
 
   - id: fillPassword
     action: type
-    selector: "input[name='password']"
+    selector: "input[name='pass']"
     value: "{credentials.password}"
+    focus: true
+    clear: true
 
   - id: clickLoginButton
     action: click
@@ -46,12 +50,12 @@ actions:
 
   - id: dismissSaveInfo
     action: clickIfExists
-    selector: "//div[@role='button' and contains(text(), 'Not now')]"
+    selector: "//div[@role='button' and contains(translate(text(),'NOTNOW','notnow'), 'not')]"
     waitAfter: 1500
 
   - id: dismissNotifications
     action: clickIfExists
-    selector: "//button[contains(text(), 'Not Now')]"
+    selector: "//button[contains(translate(text(),'NOTNOW','notnow'), 'not')]"
     waitAfter: 1500
 
   - id: waitForFeed
