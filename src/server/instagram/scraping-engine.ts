@@ -23,7 +23,7 @@ function interpolate(value: string, ctx: VariableContext): string {
         return _match;
       }
     }
-    return String(obj);
+    return obj == null ? '' : String(obj);
   });
 }
 
@@ -94,6 +94,8 @@ export class ScrapingEngine {
       }
 
       case "type": {
+        const value = interpolate(action.value || "", this.ctx);
+        if (!value) break;
         let el: any;
         try {
           el = await this.waitForEl(action.selector!, action.timeout);
@@ -101,7 +103,6 @@ export class ScrapingEngine {
           el = await this.driver.executeScript("return document.activeElement");
         }
         if (!el) break;
-        const value = interpolate(action.value || "", this.ctx);
         if (typeof el.click === "function") await el.click();
         await humanDelay(200, 400);
         await this.driver.executeScript(
@@ -173,7 +174,9 @@ export class ScrapingEngine {
       }
 
       case "javascript": {
-        const result = await this.driver.executeScript(action.script!, action.value);
+        const script = interpolate(action.script || "", this.ctx);
+        const val = action.value ? interpolate(action.value, this.ctx) : undefined;
+        const result = await this.driver.executeScript(script, val);
         return result;
       }
 

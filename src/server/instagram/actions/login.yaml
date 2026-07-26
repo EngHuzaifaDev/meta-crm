@@ -40,6 +40,21 @@ actions:
       }
     waitAfter: 4000
 
+  - id: focusVerificationCode
+    action: javascript
+    value: "{credentials.verificationCode}"
+    script: |
+      const code = arguments[0];
+      if (!code) return;
+      for (const inp of document.querySelectorAll('input:not([type="hidden"])')) {
+        if (inp.offsetParent !== null && !inp.value) {
+          inp.focus();
+          inp.select();
+          return;
+        }
+      }
+    waitAfter: 500
+
   - id: fillVerificationCode
     action: type
     value: "{credentials.verificationCode}"
