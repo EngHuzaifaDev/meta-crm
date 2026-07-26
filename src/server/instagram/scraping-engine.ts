@@ -108,11 +108,19 @@ export class ScrapingEngine {
           `const el = arguments[0];
            const val = arguments[1];
            const shouldClear = arguments[2];
-           if (shouldClear) el.value = '';
-           el.value = val;
-           el.dispatchEvent(new Event('input', { bubbles: true }));
-           el.dispatchEvent(new Event('change', { bubbles: true }));
-           el.dispatchEvent(new Event('blur', { bubbles: true }));`,
+           const setter = Object.getOwnPropertyDescriptor(
+             HTMLInputElement.prototype, 'value'
+           )?.set;
+           if (shouldClear && setter) {
+             setter.call(el, '');
+             el.dispatchEvent(new Event('input', { bubbles: true }));
+           }
+           if (setter) {
+             setter.call(el, val);
+             el.dispatchEvent(new Event('input', { bubbles: true }));
+             el.dispatchEvent(new Event('change', { bubbles: true }));
+             el.dispatchEvent(new Event('blur', { bubbles: true }));
+           }`,
           el, value, action.clear,
         );
         await humanDelay(400, 800);
