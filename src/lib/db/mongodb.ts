@@ -1,4 +1,4 @@
-import { MongoClient, Db } from "mongodb";
+import { type Db, MongoClient } from "mongodb";
 
 const uri = process.env.MongoDB_URI as string;
 const dbName = process.env.MONGO_DB_NAME as string;
@@ -8,7 +8,7 @@ if (!uri) {
 }
 
 let client: MongoClient;
-let db: Db;
+let _db: Db;
 
 declare global {
   // eslint-disable-next-line no-var

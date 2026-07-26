@@ -1,7 +1,8 @@
 // lib/db/utils/user.ts
 import { ObjectId } from "mongodb";
+
 import { mongodbInstance } from "@/lib/db/mongodb"; // your native Db instance
-import { IUser } from "@/lib/db/types";
+import type { IUser } from "@/lib/db/types";
 
 // Reference to the "user" collection (Better Auth's default)
 const users = mongodbInstance.collection<IUser>("user");
@@ -14,17 +15,12 @@ export async function getUserById(userId: string): Promise<IUser | null> {
   return users.findOne({ _id });
 }
 
-
-
 /**
  * Check if an email is already registered.
  */
 export async function isEmailRegistered(email: string): Promise<boolean> {
   const normalized = email.toLowerCase().trim();
-  const user = await users.findOne(
-    { email: normalized },
-    { projection: { _id: 1 } }
-  );
+  const user = await users.findOne({ email: normalized }, { projection: { _id: 1 } });
   return !!user;
 }
 
@@ -33,7 +29,7 @@ export async function isEmailRegistered(email: string): Promise<boolean> {
  */
 export async function updateUserFields(
   userId: string,
-  fields: Partial<Pick<IUser, "name" | "industry" | "role" | "services">>
+  fields: Partial<Pick<IUser, "name" | "industry" | "role" | "services">>,
 ): Promise<void> {
   const _id = new ObjectId(userId);
   await users.updateOne({ _id }, { $set: fields });

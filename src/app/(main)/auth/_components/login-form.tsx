@@ -2,16 +2,19 @@
 "use client";
 
 import { startTransition, useActionState, useEffect } from "react";
+
+import { useRouter } from "next/navigation";
+
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
-import { useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { signIn } from "../actions";  // your server action
+
+import { signIn } from "../actions"; // your server action
 
 const formSchema = z.object({
   email: z.email("Please enter a valid email address."),
@@ -34,7 +37,7 @@ export function LoginForm() {
     async (prevState: { error?: string; success?: boolean }, formData: FormData) => {
       return await signIn(prevState, formData);
     },
-    { error: "" }
+    { error: "" },
   );
 
   // Handle success / error toasts

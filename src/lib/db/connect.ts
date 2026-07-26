@@ -3,11 +3,11 @@ import mongoose from "mongoose";
 
 // Use exactly the env variable names you defined
 const MONGODB_URI = process.env.MongoDB_URI as string;
-const DB_NAME = process.env.MONGO_DB_NAME || "leadtor";
+const DB_NAME = process.env.MONGO_DB_NAME || "meta-crm";
 
 if (!MONGODB_URI) {
   throw new Error(
-    "Please define MongoDB_URI in your environment variables. Example: mongodb://root:root@mongodb:27017"
+    "Please define MongoDB_URI in your environment variables. Example: mongodb://root:root@mongodb:27017",
   );
 }
 
@@ -59,8 +59,6 @@ export async function getNativeDb() {
   }
   return db.connection.db!;
 }
-
-
 
 export { db };
 export default dbConnect;

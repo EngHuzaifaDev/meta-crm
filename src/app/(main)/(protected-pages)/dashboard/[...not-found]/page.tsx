@@ -1,6 +1,7 @@
 "use client";
-import { Button } from "@/components/ui/button";
 import Link from "next/link";
+
+import { Button } from "@/components/ui/button";
 export default function DashboardNotFound() {
   return (
     <div className="flex h-dvh flex-col items-center justify-center space-y-2 text-center">

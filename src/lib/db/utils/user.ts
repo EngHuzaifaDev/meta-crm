@@ -1,7 +1,10 @@
 // lib/db/utils/user.ts
-import { mongodbInstance } from "../mongodb";// your new native connection
-import { IUser } from "@/lib/db/types";
+
 import { ObjectId } from "mongodb";
+
+import type { IUser } from "@/lib/db/types";
+
+import { mongodbInstance } from "../mongodb"; // your new native connection
 
 const users = mongodbInstance.collection<IUser>("user");
 
@@ -18,7 +21,7 @@ export async function isEmailRegistered(email: string): Promise<boolean> {
 
 export async function updateUserFields(
   userId: string,
-  fields: Partial<Pick<IUser, "name" | "industry" | "role" | "services">>
+  fields: Partial<Pick<IUser, "name" | "industry" | "role" | "services">>,
 ): Promise<void> {
   const _id = new ObjectId(userId);
   await users.updateOne({ _id }, { $set: fields });

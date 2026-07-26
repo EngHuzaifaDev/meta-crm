@@ -1,18 +1,19 @@
 import type { ReactNode } from "react";
+
 import { cookies, headers } from "next/headers";
-import { AppSidebar } from "./_components/sidebar/app-sidebar";
+import { redirect } from "next/navigation";
+
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { auth } from "@/lib/auth";
 import { SIDEBAR_COLLAPSIBLE_VALUES, SIDEBAR_VARIANT_VALUES } from "@/lib/preferences/layout";
 import { cn } from "@/lib/utils";
 import { getPreference } from "@/server/server-actions";
 
 import { UserMenu } from "./_components/sidebar/account-switcher";
+import { AppSidebar } from "./_components/sidebar/app-sidebar";
 import { LayoutControls } from "./_components/sidebar/layout-controls";
 import { ThemeSwitcher } from "./_components/sidebar/theme-switcher";
-import { auth } from "@/lib/auth";
-import { redirect } from "next/navigation";
-
 
 export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
   const session = await auth.api.getSession({

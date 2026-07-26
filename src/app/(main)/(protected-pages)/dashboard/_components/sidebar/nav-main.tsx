@@ -1,11 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { redirect, usePathname } from "next/navigation";
+import { usePathname } from "next/navigation";
 
-import { ChevronRight, MailIcon, PlusCircleIcon } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -35,35 +34,9 @@ import type {
   NavMainLinkItem,
   NavMainParentItem,
 } from "@/navigation/sidebar/sidebar-items";
-import { router } from "better-auth/api";
 
 interface NavMainProps {
   readonly items: readonly NavGroup[];
-}
-interface NavItemProps {
-  readonly item: NavMainItem;
-  readonly isItemActive: (item: NavMainItem) => boolean;
-  readonly isSubItemActive: (url: string) => boolean;
-  readonly isSubmenuOpen: (item: NavMainParentItem) => boolean;
-}
-
-interface NavLinkItemProps {
-  readonly item: NavMainLinkItem;
-  readonly isActive: boolean;
-  readonly showIconFallback: boolean;
-}
-
-interface NavDropdownItemProps {
-  readonly item: NavMainParentItem;
-  readonly isActive: boolean;
-  readonly isSubItemActive: (url: string) => boolean;
-}
-
-interface NavCollapsibleItemProps {
-  readonly item: NavMainParentItem;
-  readonly isActive: boolean;
-  readonly defaultOpen: boolean;
-  readonly isSubItemActive: (url: string) => boolean;
 }
 
 function CollapsedIconFallback({ title }: { title: string }) {
@@ -85,13 +58,10 @@ export function NavMain({ items }: NavMainProps) {
     if (hasSubItems(item)) {
       return item.subItems.some((sub) => path.startsWith(sub.url));
     }
-
     return path === item.url;
   };
 
-  const isSubItemActive = (url: string) => {
-    return path === url;
-  };
+  const isSubItemActive = (url: string) => path === url;
 
   const isSubmenuOpen = (item: NavMainParentItem) => {
     return item.subItems.some((sub) => path.startsWith(sub.url));
@@ -99,30 +69,6 @@ export function NavMain({ items }: NavMainProps) {
 
   return (
     <>
-      <SidebarGroup>
-        <SidebarGroupContent className="flex flex-col gap-2">
-          <SidebarMenu>
-            <SidebarMenuItem className="flex items-center gap-2">
-              <SidebarMenuButton
-                tooltip="New Lead"
-                className=" cursor-pointer min-w-8 bg-primary text-primary-foreground duration-200 ease-linear hover:bg-primary/90 hover:text-primary-foreground active:bg-primary/90 active:text-primary-foreground"
-                onClick={()=> redirect('/dashboard/leads/new')}
-              >
-                <PlusCircleIcon />
-                <span>Start work on new lead</span>
-              </SidebarMenuButton>
-              {/* <Button
-                size="icon"
-                className="h-9 w-9 shrink-0 group-data-[collapsible=icon]:opacity-0"
-                variant="outline"
-              >
-                <MailIcon />
-                <span className="sr-only">Inbox</span>
-              </Button> */}
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroupContent>
-      </SidebarGroup>
       {items.map((group) => (
         <SidebarGroup key={group.id}>
           {group.label && (
@@ -149,7 +95,17 @@ export function NavMain({ items }: NavMainProps) {
   );
 }
 
-function NavItem({ item, isItemActive, isSubItemActive, isSubmenuOpen }: NavItemProps) {
+function NavItem({
+  item,
+  isItemActive,
+  isSubItemActive,
+  isSubmenuOpen,
+}: {
+  item: NavMainItem;
+  isItemActive: (item: NavMainItem) => boolean;
+  isSubItemActive: (url: string) => boolean;
+  isSubmenuOpen: (item: NavMainParentItem) => boolean;
+}) {
   const { state, isMobile } = useSidebar();
   const isCollapsedDesktop = state === "collapsed" && !isMobile;
 
@@ -171,7 +127,15 @@ function NavItem({ item, isItemActive, isSubItemActive, isSubmenuOpen }: NavItem
   );
 }
 
-function NavLinkItem({ item, isActive, showIconFallback }: NavLinkItemProps) {
+function NavLinkItem({
+  item,
+  isActive,
+  showIconFallback,
+}: {
+  item: NavMainLinkItem;
+  isActive: boolean;
+  showIconFallback: boolean;
+}) {
   const Icon = item.icon;
 
   return (
@@ -192,7 +156,15 @@ function NavLinkItem({ item, isActive, showIconFallback }: NavLinkItemProps) {
   );
 }
 
-function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemProps) {
+function NavDropdownItem({
+  item,
+  isActive,
+  isSubItemActive,
+}: {
+  item: NavMainParentItem;
+  isActive: boolean;
+  isSubItemActive: (url: string) => boolean;
+}) {
   const Icon = item.icon;
 
   return (
@@ -204,12 +176,10 @@ function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemPro
             <span>{item.title}</span>
           </SidebarMenuButton>
         </DropdownMenuTrigger>
-
         <DropdownMenuContent side="right" align="start" sideOffset={12} className="w-48">
           <DropdownMenuGroup>
             {item.subItems.map((subItem) => {
               const SubIcon = subItem.icon;
-
               return (
                 <DropdownMenuItem key={subItem.id} asChild disabled={subItem.disabled}>
                   <Link
@@ -233,7 +203,17 @@ function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemPro
   );
 }
 
-function NavCollapsibleItem({ item, isActive, defaultOpen, isSubItemActive }: NavCollapsibleItemProps) {
+function NavCollapsibleItem({
+  item,
+  isActive,
+  defaultOpen,
+  isSubItemActive,
+}: {
+  item: NavMainParentItem;
+  isActive: boolean;
+  defaultOpen: boolean;
+  isSubItemActive: (url: string) => boolean;
+}) {
   const Icon = item.icon;
 
   return (
@@ -247,12 +227,10 @@ function NavCollapsibleItem({ item, isActive, defaultOpen, isSubItemActive }: Na
           </SidebarMenuButton>
         </CollapsibleTrigger>
         <NavItemBadge badge={item.badge} />
-
         <CollapsibleContent>
           <SidebarMenuSub>
             {item.subItems.map((subItem) => {
               const SubIcon = subItem.icon;
-
               return (
                 <SidebarMenuSubItem key={subItem.id}>
                   <SidebarMenuSubButton
@@ -281,10 +259,7 @@ function NavCollapsibleItem({ item, isActive, defaultOpen, isSubItemActive }: Na
 }
 
 function NavItemBadge({ badge }: { badge?: NavBadge }) {
-  if (!badge) {
-    return null;
-  }
-
+  if (!badge) return null;
   return (
     <SidebarMenuBadge
       className={cn(

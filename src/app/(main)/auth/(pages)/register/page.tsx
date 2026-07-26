@@ -1,9 +1,12 @@
 // app/(auth)/register/page.tsx  (adjust path as needed)
 import Link from "next/link";
 import { redirect } from "next/navigation";
+
 import { Command } from "lucide-react";
-import { RegisterForm } from "../../_components/register-form";
+
 import { auth } from "@/lib/auth";
+
+import { RegisterForm } from "../../_components/register-form";
 
 export default async function RegisterV1() {
   // If the user is already logged in, send them to the dashboard
@@ -14,7 +17,6 @@ export default async function RegisterV1() {
   if (session) {
     redirect("/dashboard/crm"); // or wherever you want logged‑in users to go
   }
-
 
   return (
     <div className="flex h-dvh">

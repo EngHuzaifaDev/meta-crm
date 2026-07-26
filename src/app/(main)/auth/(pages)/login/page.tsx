@@ -1,11 +1,14 @@
 // src/app/(main)/auth/(pages)/login/page.tsx
+
+import { headers } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
+
 import { Command } from "lucide-react";
 
-import { LoginForm } from "../../_components/login-form";
 import { auth } from "@/lib/auth";
+
+import { LoginForm } from "../../_components/login-form";
 
 export default async function LoginV1() {
   // Check if the user is already authenticated
@@ -14,7 +17,7 @@ export default async function LoginV1() {
   });
 
   if (session) {
-    redirect("/dashboard/crm");   // or any page for logged‑in users
+    redirect("/dashboard/crm"); // or any page for logged‑in users
   }
 
   return (

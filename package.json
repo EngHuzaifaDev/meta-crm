@@ -1,9 +1,9 @@
 {
-  "name": "loadtor",
+  "name": "meta-crm",
   "version": "2.2.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3003",
     "build": "next build",
     "start": "next start",
     "lint": "biome lint",

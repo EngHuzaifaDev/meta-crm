@@ -2,9 +2,8 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { nextCookies } from "better-auth/next-js";
+
 import { mongodbInstance } from "./db/mongodb";
-
-
 
 export const auth = betterAuth({
   database: mongodbAdapter(mongodbInstance),
@@ -21,13 +20,13 @@ export const auth = betterAuth({
     additionalFields: {
       role: {
         type: "number",
-        defaultValue: 1,          // 0 = admin, 1 = user
-        input: false,             // cannot be set by client during sign-up
+        defaultValue: 1, // 0 = admin, 1 = user
+        input: false, // cannot be set by client during sign-up
       },
       industry: {
         type: "string",
         required: false,
-        input: true,              // clients can supply this field
+        input: true, // clients can supply this field
       },
       avatar: {
         type: "string",

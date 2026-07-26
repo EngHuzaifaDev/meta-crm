@@ -2,7 +2,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { BadgeCheck, Bell, CreditCard, LogOut } from "lucide-react";
+
+import { BadgeCheck, LogOut } from "lucide-react";
+
+import { signOutAction } from "@/app/(main)/auth/actions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -13,9 +16,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getInitials } from "@/lib/utils";
-import { signOutAction } from "@/app/(main)/auth/actions";
 import { useSession } from "@/lib/auth-client"; // or useUserStore if you prefer
+import { getInitials } from "@/lib/utils";
 
 function roleLabel(role: number) {
   return role === 0 ? "Admin" : "User";
@@ -39,12 +41,7 @@ export function UserMenu() {
         <DropdownMenuTrigger asChild>
           <Skeleton className="size-8 rounded-lg" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent
-          className="min-w-56 space-y-1 rounded-lg"
-          side="bottom"
-          align="end"
-          sideOffset={4}
-        >
+        <DropdownMenuContent className="min-w-56 space-y-1 rounded-lg" side="bottom" align="end" sideOffset={4}>
           {/* Header skeleton */}
           <div className="flex items-center gap-2 px-2 py-2">
             <Skeleton className="size-9 rounded-lg" />
@@ -72,17 +69,12 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Avatar className="size-8 rounded-lg cursor-pointer">
+        <Avatar className="size-8 cursor-pointer rounded-lg">
           <AvatarImage src={user.avatar || undefined} alt={user.name} />
           <AvatarFallback>{getInitials(user.name)}</AvatarFallback>
         </Avatar>
       </DropdownMenuTrigger>
-      <DropdownMenuContent
-        className="min-w-56 space-y-1 rounded-lg"
-        side="bottom"
-        align="end"
-        sideOffset={4}
-      >
+      <DropdownMenuContent className="min-w-56 space-y-1 rounded-lg" side="bottom" align="end" sideOffset={4}>
         {/* User info header */}
         <div className="flex items-center gap-2 px-2 py-2">
           <Avatar className="size-9 rounded-lg">
@@ -91,9 +83,7 @@ export function UserMenu() {
           </Avatar>
           <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
             <span className="truncate font-semibold">{user.name}</span>
-            <span className="truncate text-xs text-muted-foreground">
-              {roleLabel(user.role ?? 1)}
-            </span>
+            <span className="truncate text-muted-foreground text-xs">{roleLabel(user.role ?? 1)}</span>
           </div>
         </div>
 
