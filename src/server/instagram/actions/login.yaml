@@ -16,19 +16,25 @@ actions:
     action: type
     selector: "input[name='email']"
     value: "{credentials.username}"
-    focus: true
-    clear: true
 
   - id: fillPassword
     action: type
     selector: "input[name='pass']"
     value: "{credentials.password}"
-    focus: true
-    clear: true
 
   - id: clickLoginButton
-    action: click
-    selector: "button[type='submit']"
+    action: javascript
+    script: |
+      const btn = document.querySelector('[type="submit"]');
+      if (btn) { btn.click(); return; }
+      const spans = document.querySelectorAll('span');
+      for (const s of spans) {
+        if (s.textContent.trim() === 'Log in') {
+          const parent = s.closest('[role="button"], button, div[role="none"]');
+          if (parent) { parent.click(); return; }
+        }
+      }
+      document.querySelector('form')?.requestSubmit();
     waitAfter: 3000
 
   - id: handleVerificationCode

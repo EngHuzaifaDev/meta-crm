@@ -94,7 +94,7 @@ export class ScrapingEngine {
       }
 
       case "type": {
-        let el;
+        let el: any;
         try {
           el = await this.waitForEl(action.selector!, action.timeout);
         } catch {
@@ -102,14 +102,17 @@ export class ScrapingEngine {
         }
         if (!el) break;
         const value = interpolate(action.value || "", this.ctx);
+        if (typeof el.click === "function") await el.click();
+        await humanDelay(200, 400);
         await this.driver.executeScript(
           `const el = arguments[0];
            const val = arguments[1];
-           el.focus();
-           if (arguments[2]) el.value = '';
+           const shouldClear = arguments[2];
+           if (shouldClear) el.value = '';
            el.value = val;
            el.dispatchEvent(new Event('input', { bubbles: true }));
-           el.dispatchEvent(new Event('change', { bubbles: true }));`,
+           el.dispatchEvent(new Event('change', { bubbles: true }));
+           el.dispatchEvent(new Event('blur', { bubbles: true }));`,
           el, value, action.clear,
         );
         await humanDelay(400, 800);
