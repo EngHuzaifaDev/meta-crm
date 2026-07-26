@@ -1,5 +1,5 @@
-name: instagram-reels
-description: Navigate to reels and engage (like)
+name: instagram-reels-scroll
+description: Scroll through a few reels to simulate human activity
 actions:
   - id: navigateToReels
     action: navigate
@@ -9,9 +9,29 @@ actions:
   - id: waitForReel
     action: wait
     selector: "article"
-    timeout: 10000
-
-  - id: likeFirstReel
-    action: click
-    selector: "//span[@role='button' and .//svg[@aria-label='Like']]"
+    timeout: 15000
     waitAfter: 2000
+
+  - id: scrollReels
+    action: repeat
+    maxIterations: 5
+    actions:
+      - id: watchReel
+        action: waitFor
+        timeout: 4000
+        waitAfter: 1000
+
+      - id: likeReel
+        action: clickIfExists
+        selector: "//span[@role='button' and .//svg[@aria-label='Like']]"
+        waitAfter: 1000
+
+      - id: scrollNextReel
+        action: javascript
+        script: |
+          const reels = document.querySelectorAll('video');
+          if (reels.length > 0) {
+            const last = reels[reels.length - 1];
+            last.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        waitAfter: 2000

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Clock, Loader2, LogOut, Plus, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,28 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+interface SessionInfo {
+  savedAt: string;
+  expiresAt?: string;
+  userAgent?: string;
+}
+
 interface Credential {
   _id: string;
   instagramUsername: string;
   isActive: boolean;
   createdAt: string;
+  session: SessionInfo | null;
+}
+
+function formatExpiry(expiresAt?: string): { label: string; variant: "default" | "secondary" | "destructive" } {
+  if (!expiresAt) return { label: "No session", variant: "secondary" };
+  const diff = new Date(expiresAt).getTime() - Date.now();
+  if (diff <= 0) return { label: "Expired", variant: "destructive" };
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 1) return { label: `${Math.floor(diff / 60000)}m remaining`, variant: "destructive" };
+  if (hours < 24) return { label: `${hours}h remaining`, variant: "default" };
+  return { label: `${Math.floor(hours / 24)}d remaining`, variant: "default" };
 }
 
 export default function CredentialsPage() {
@@ -68,6 +85,15 @@ export default function CredentialsPage() {
     }
   };
 
+  const clearSession = async (id: string) => {
+    try {
+      await fetch(`/api/instagram/session?id=${id}`, { method: "DELETE" });
+      await load();
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -104,13 +130,9 @@ export default function CredentialsPage() {
             </div>
             <Button type="submit" disabled={saving || !username.trim() || !password.trim()}>
               {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
-                </>
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
               ) : (
-                <>
-                  <Plus className="mr-2 h-4 w-4" /> Add Credential
-                </>
+                <><Plus className="mr-2 h-4 w-4" /> Add Credential</>
               )}
             </Button>
           </form>
@@ -130,19 +152,42 @@ export default function CredentialsPage() {
             <p className="text-muted-foreground text-sm">No credentials added yet.</p>
           ) : (
             <div className="space-y-3">
-              {creds.map((cred) => (
-                <div key={cred._id} className="flex items-center justify-between rounded border p-3">
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium">@{cred.instagramUsername}</span>
-                    <Badge variant={cred.isActive ? "default" : "secondary"}>
-                      {cred.isActive ? "Active" : "Inactive"}
-                    </Badge>
+              {creds.map((cred) => {
+                const expiry = formatExpiry(cred.session?.expiresAt);
+                return (
+                  <div key={cred._id} className="flex items-center justify-between rounded border p-3">
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">@{cred.instagramUsername}</span>
+                          <Badge variant={cred.isActive ? "default" : "secondary"}>
+                            {cred.isActive ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          <Badge variant={expiry.variant} className="text-[10px] px-1.5 py-0">
+                            {expiry.label}
+                          </Badge>
+                          {cred.session?.savedAt && (
+                            <span>saved {new Date(cred.session.savedAt).toLocaleDateString()}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-1">
+                      {cred.session && (
+                        <Button variant="ghost" size="icon" onClick={() => clearSession(cred._id)} title="Clear session">
+                          <LogOut className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" onClick={() => deleteCredential(cred._id)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => deleteCredential(cred._id)}>
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

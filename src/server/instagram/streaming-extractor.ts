@@ -1,17 +1,20 @@
-import { updateTargetProfileScraped, upsertFollower } from "@/lib/db/utils/instagram";
-
 import { createDriver } from "./driver";
 import { loginToInstagram } from "./login";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
+import { upsertFollower, updateTargetProfileScraped } from "@/lib/db/utils/instagram";
+import { createChallenge } from "./challenges";
 import path from "node:path";
 
 const ACTIONS_DIR = path.resolve(process.cwd(), "src/server/instagram/actions");
 const NAVIGATE_YAML = path.join(ACTIONS_DIR, "navigate-profile.yaml");
 const FOLLOWERS_YAML = path.join(ACTIONS_DIR, "followers.yaml");
+const REELS_YAML = path.join(ACTIONS_DIR, "reels.yaml");
+
+const REEL_SCROLL_INTERVAL = 5;
 
 export interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "done" | "error";
+  type: "status" | "follower" | "invalid" | "duplicate" | "done" | "error" | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -19,14 +22,27 @@ export interface ProgressEvent {
   totalFollowers?: number;
   invalidCount?: number;
   duplicateCount?: number;
+  processedCount?: number;
+  totalCount?: number;
   error?: string;
+  credentialId?: string;
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void | Promise<void>;
 
+export interface StreamOptions {
+  credentials: {
+    username: string;
+    password: string;
+    verificationCode?: string;
+  };
+  credentialId?: string;
+  existingCookies?: Array<{ name: string; value: string; domain: string; path: string; httpOnly?: boolean; secure?: boolean; expiry?: number }>;
+  usernames: string[];
+}
+
 export async function extractFollowersStream(
-  credentials: { username: string; password: string; verificationCode?: string },
-  usernames: string[],
+  options: StreamOptions,
   onProgress: ProgressCallback,
 ): Promise<void> {
   const driver = await createDriver();
@@ -34,30 +50,82 @@ export async function extractFollowersStream(
   let totalFollowers = 0;
   let invalidCount = 0;
   let duplicateCount = 0;
+  let processedCount = 0;
+  const totalCount = options.usernames.length;
 
   try {
-    await onProgress({ type: "status", message: "Logging into Instagram..." });
+    await onProgress({
+      type: "status",
+      message: "Logging into Instagram...",
+      processedCount,
+      totalCount,
+    });
 
-    const loginResult = await loginToInstagram(driver, credentials);
-    if (!loginResult.success) {
+    const loginResult = await loginToInstagram(driver, {
+      username: options.credentials.username,
+      password: options.credentials.password,
+      verificationCode: options.credentials.verificationCode,
+      credentialId: options.credentialId,
+      existingCookies: options.existingCookies,
+    });
+
+    if (loginResult.needs2FA) {
       await onProgress({
-        type: "error",
-        error: `Login failed: ${loginResult.error}`,
+        type: "2fa_required",
+        credentialId: options.credentialId,
+        message: "Verification code required. Check your email or authenticator app.",
       });
+
+      if (!options.credentialId) {
+        await onProgress({ type: "error", error: "No credential ID for 2FA challenge" });
+        return;
+      }
+
+      try {
+        const code = await createChallenge(options.credentialId);
+        options.credentials.verificationCode = code;
+
+        const retryResult = await loginToInstagram(driver, {
+          username: options.credentials.username,
+          password: options.credentials.password,
+          verificationCode: code,
+          credentialId: options.credentialId,
+        });
+
+        if (!retryResult.success) {
+          await onProgress({ type: "error", error: `2FA login failed: ${retryResult.error}` });
+          return;
+        }
+      } catch {
+        await onProgress({ type: "error", error: "2FA challenge timed out" });
+        return;
+      }
+    } else if (!loginResult.success) {
+      await onProgress({ type: "error", error: `Login failed: ${loginResult.error}` });
       return;
     }
 
-    await onProgress({ type: "status", message: "Login successful" });
+    await onProgress({
+      type: "status",
+      message: "Login successful — starting extraction",
+      processedCount,
+      totalCount,
+    });
 
-    for (const targetUsername of usernames) {
+    for (let i = 0; i < options.usernames.length; i++) {
+      const targetUsername = options.usernames[i];
+      processedCount = i + 1;
+
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
-        message: `Extracting followers for @${targetUsername}...`,
+        message: `[${processedCount}/${totalCount}] Extracting followers for @${targetUsername}...`,
+        processedCount,
+        totalCount,
       });
 
       const ctx: VariableContext = {
-        credentials,
+        credentials: options.credentials,
         profile: { username: targetUsername },
       };
 
@@ -74,6 +142,8 @@ export async function extractFollowersStream(
           profileUsername: targetUsername,
           message: `@${targetUsername} not found`,
           invalidCount,
+          processedCount,
+          totalCount,
         });
         continue;
       }
@@ -81,7 +151,9 @@ export async function extractFollowersStream(
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
-        message: `Scrolling followers list for @${targetUsername}...`,
+        message: `[${processedCount}/${totalCount}] Scrolling followers list for @${targetUsername}...`,
+        processedCount,
+        totalCount,
       });
 
       const followersDef = await engine.loadDefinition(FOLLOWERS_YAML);
@@ -113,6 +185,8 @@ export async function extractFollowersStream(
           totalFollowers,
           duplicateCount,
           invalidCount,
+          processedCount,
+          totalCount,
         });
       }
 
@@ -125,7 +199,28 @@ export async function extractFollowersStream(
         totalFollowers,
         duplicateCount,
         invalidCount,
+        processedCount,
+        totalCount,
       });
+
+      if ((i + 1) % REEL_SCROLL_INTERVAL === 0 && i < options.usernames.length - 1) {
+        await onProgress({
+          type: "status",
+          message: `Scrolling reels to avoid detection (${processedCount}/${totalCount} profiles done)...`,
+          processedCount,
+          totalCount,
+        });
+
+        const reelDef = await engine.loadDefinition(REELS_YAML);
+        await engine.execute(reelDef);
+
+        await onProgress({
+          type: "status",
+          message: `Reel scroll done — continuing extraction`,
+          processedCount,
+          totalCount,
+        });
+      }
     }
 
     await onProgress({
@@ -134,11 +229,15 @@ export async function extractFollowersStream(
       totalFollowers,
       invalidCount,
       duplicateCount,
+      processedCount,
+      totalCount,
     });
   } catch (error: any) {
     await onProgress({
       type: "error",
       error: error.message || "Unknown error during extraction",
+      processedCount,
+      totalCount,
     });
   } finally {
     await driver.quit();

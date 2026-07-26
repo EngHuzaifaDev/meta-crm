@@ -1,18 +1,8 @@
-import type { NextRequest } from "next/server";
-
-import { getActiveCredentials } from "@/lib/db/utils/instagram";
-import { extractFollowersStream } from "@/server/instagram/streaming-extractor";
+import { NextRequest } from 'next/server';
+import { getActiveCredentials, getCredentialById } from '@/lib/db/utils/instagram';
+import { extractFollowersStream } from '@/server/instagram/streaming-extractor';
 
 export const maxDuration = 300;
-
-function encoder() {
-  const textEncoder = new TextEncoder();
-  return {
-    encode(data: string) {
-      return textEncoder.encode(data);
-    },
-  };
-}
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
@@ -22,43 +12,51 @@ export async function POST(request: NextRequest) {
   };
 
   if (!usernames?.length) {
-    return new Response(JSON.stringify({ error: "usernames required" }), {
+    return new Response(JSON.stringify({ error: 'usernames required' }), {
       status: 400,
-      headers: { "Content-Type": "application/json" },
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  const activeCreds = await getActiveCredentials();
-  const cred = credentialId ? activeCreds.find((c) => String(c._id) === credentialId) : activeCreds[0];
+  let cred;
+  if (credentialId) {
+    cred = await getCredentialById(credentialId);
+  } else {
+    const active = await getActiveCredentials();
+    cred = active[0];
+  }
 
   if (!cred) {
-    return new Response(JSON.stringify({ error: "No active credentials" }), {
+    return new Response(JSON.stringify({ error: 'No active credentials' }), {
       status: 400,
-      headers: { "Content-Type": "application/json" },
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
   const stream = new ReadableStream({
     async start(controller) {
-      const { encode } = encoder();
-
+      const enc = new TextEncoder();
       const send = (event: string, data: unknown) => {
-        controller.enqueue(encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
 
       try {
         await extractFollowersStream(
           {
-            username: cred.instagramUsername,
-            password: cred.encryptedPassword,
+            credentials: {
+              username: cred.instagramUsername,
+              password: cred.encryptedPassword,
+            },
+            credentialId: String(cred._id),
+            existingCookies: cred.session?.cookies,
+            usernames,
           },
-          usernames,
           (progress) => {
-            send("progress", progress);
+            send('progress', progress);
           },
         );
       } catch (error: any) {
-        send("error", { error: error.message });
+        send('error', { error: error.message });
       } finally {
         controller.close();
       }
@@ -67,9 +65,9 @@ export async function POST(request: NextRequest) {
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
     },
   });
 }

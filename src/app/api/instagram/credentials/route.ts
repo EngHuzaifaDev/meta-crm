@@ -16,6 +16,13 @@ export async function GET() {
     instagramUsername: c.instagramUsername,
     isActive: c.isActive,
     createdAt: c.createdAt,
+    session: c.session
+      ? {
+          savedAt: c.session.savedAt,
+          expiresAt: c.session.expiresAt,
+          userAgent: c.session.userAgent,
+        }
+      : null,
   }));
   return NextResponse.json(safe);
 }

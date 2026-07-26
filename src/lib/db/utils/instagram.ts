@@ -2,12 +2,20 @@ import type { ObjectId } from "mongodb";
 
 import { mongodbInstance } from "@/lib/db/mongodb";
 
+export interface SessionData {
+  cookies: Array<{ name: string; value: string; domain: string; path: string; httpOnly?: boolean; secure?: boolean; expiry?: number }>;
+  userAgent?: string;
+  savedAt: Date;
+  expiresAt?: Date;
+}
+
 export interface InstagramCredential {
   _id?: ObjectId;
   adminUserId: string;
   instagramUsername: string;
   encryptedPassword: string;
   isActive: boolean;
+  session?: SessionData;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -48,6 +56,27 @@ export async function createCredential(
 
 export async function getActiveCredentials(): Promise<InstagramCredential[]> {
   return credentialsCol.find({ isActive: true }).toArray();
+}
+
+export async function getCredentialById(id: string): Promise<InstagramCredential | null> {
+  return credentialsCol.findOne({ _id: id as any });
+}
+
+export async function saveSession(
+  credentialId: string,
+  session: SessionData,
+): Promise<void> {
+  await credentialsCol.updateOne(
+    { _id: credentialId as any },
+    { $set: { session, updatedAt: new Date() } },
+  );
+}
+
+export async function clearSession(credentialId: string): Promise<void> {
+  await credentialsCol.updateOne(
+    { _id: credentialId as any },
+    { $unset: { session: "" }, $set: { updatedAt: new Date() } },
+  );
 }
 
 export async function addTargetProfile(data: {
