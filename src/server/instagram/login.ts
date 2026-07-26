@@ -58,7 +58,7 @@ export async function loginToInstagram(
     await engine.execute(definition);
   } catch (error: any) {
     const currentUrl = await driver.getCurrentUrl();
-    if (currentUrl.includes('/challenge')) {
+    if (currentUrl.includes('/challenge') || currentUrl.includes('/codeentry')) {
       return { success: false, needs2FA: true, error: '2FA code required' };
     }
     return {
@@ -68,7 +68,7 @@ export async function loginToInstagram(
   }
 
   const currentUrl = await driver.getCurrentUrl();
-  if (currentUrl.includes('/accounts/login') || currentUrl.includes('/challenge')) {
+  if (currentUrl.includes('/accounts/login') || currentUrl.includes('/challenge') || currentUrl.includes('/codeentry')) {
     const pageText = await driver.findElement({ tagName: 'body' }).getText();
     if (pageText.includes('Enter confirmation code') || pageText.includes('verification')) {
       return { success: false, needs2FA: true, error: '2FA code required' };
