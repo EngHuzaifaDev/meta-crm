@@ -28,42 +28,49 @@ actions:
       const spans = document.querySelectorAll('span');
       for (const s of spans) {
         if (s.textContent.trim() === 'Log in') {
-          let el = s.parentElement;
-          while (el) {
-            const overlay = el.querySelector('[data-visualcompletion="ignore"]');
-            if (overlay && overlay !== el) { el.click(); return; }
+          let el = s;
+          while (el.parentElement && el.parentElement.tagName !== 'BODY') {
+            if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
+              el.parentElement.click();
+              return;
+            }
             el = el.parentElement;
           }
         }
       }
-      document.querySelector('form')?.requestSubmit();
-    waitAfter: 3000
+    waitAfter: 4000
 
-  - id: handleVerificationCode
-    action: ifExists
-    selector: "input[name='verificationCode']"
-    timeout: 4000
-    then:
-      - id: fillVerificationCode
-        action: type
-        selector: "input[name='verificationCode']"
-        value: "{credentials.verificationCode}"
-        focus: true
-        clear: true
-        waitAfter: 1000
-      - id: clickVerify
-        action: click
-        selector: "button[type='submit']"
-        waitAfter: 3000
+  - id: fillVerificationCode
+    action: type
+    value: "{credentials.verificationCode}"
+    waitAfter: 1000
+
+  - id: clickVerify
+    action: javascript
+    script: |
+      const spans = document.querySelectorAll('span');
+      for (const s of spans) {
+        if (s.textContent.trim() === 'Log in') {
+          let el = s;
+          while (el.parentElement && el.parentElement.tagName !== 'BODY') {
+            if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
+              el.parentElement.click();
+              return;
+            }
+            el = el.parentElement;
+          }
+        }
+      }
+    waitAfter: 3000
 
   - id: dismissSaveInfo
     action: clickIfExists
-    selector: "//div[@role='button' and contains(translate(text(),'NOTNOW','notnow'), 'not')]"
+    selector: "//span[contains(translate(text(),'NOT','not'), 'not')]/ancestor::div[@role='button']"
     waitAfter: 1500
 
   - id: dismissNotifications
     action: clickIfExists
-    selector: "//button[contains(translate(text(),'NOTNOW','notnow'), 'not')]"
+    selector: "//span[contains(translate(text(),'NOT','not'), 'not')]/ancestor::button"
     waitAfter: 1500
 
   - id: waitForFeed
