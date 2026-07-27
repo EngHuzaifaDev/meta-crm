@@ -6,22 +6,35 @@ import {
   updateTargetProfileScraped,
   upsertFollower,
 } from "@/lib/db/utils/instagram";
+import { ProxyManager } from "@/server/proxy/proxy-manager";
 
 import { createChallenge } from "./challenges";
 import { createDriver, extractCookies } from "./driver";
-import { extractFollowersGraphQLViaDriver } from "./graphql-extractor";
+import {
+  browserSleep,
+  fetchFollowersPageViaDriver,
+  REQUEST_DELAY_MS,
+  resolveProfileInfoViaDriver,
+} from "./graphql-extractor";
 import { loginToInstagram } from "./login";
-import { ScrapingEngine } from "./scraping-engine";
-import type { VariableContext } from "./types";
-import path from "node:path";
 
-const ACTIONS_DIR = path.resolve(process.cwd(), "src/server/instagram/actions");
-const REELS_YAML = path.join(ACTIONS_DIR, "reels.yaml");
-
-const REEL_SCROLL_INTERVAL = 5;
+const CONCURRENCY = 3;
+const CALLS_PER_PROXY = 15;
 
 export interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "2fa_required";
+  type:
+    | "status"
+    | "follower"
+    | "invalid"
+    | "duplicate"
+    | "skipped"
+    | "private"
+    | "done"
+    | "error"
+    | "2fa_required"
+    | "proxy_rotate"
+    | "reconnecting"
+    | "concurrent_status";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -38,6 +51,10 @@ export interface ProgressEvent {
   totalPages?: number;
   estimatedTotal?: number;
   totalEstimatedFollowers?: number;
+  proxyIndex?: number;
+  totalProxies?: number;
+  callsOnProxy?: number;
+  rotationCount?: number;
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void | Promise<void>;
@@ -61,8 +78,128 @@ export interface StreamOptions {
   usernames: string[];
 }
 
+interface ProfileState {
+  username: string;
+  cursor: string | null;
+  page: number;
+  totalFetched: number;
+  estimatedTotal: number;
+  done: boolean;
+  isPrivate: boolean;
+  invalid: boolean;
+  profilePicUrl: string;
+  userId: string;
+}
+
+async function loginWithRetry(
+  proxyManager: ProxyManager,
+  options: StreamOptions,
+  onProgress: ProgressCallback,
+): Promise<import("selenium-webdriver").WebDriver> {
+  while (true) {
+    const proxy = proxyManager.current ?? undefined;
+    const driver = await createDriver(proxy);
+
+    try {
+      const loginResult = await loginToInstagram(driver, {
+        username: options.credentials.username,
+        password: options.credentials.password,
+        verificationCode: options.credentials.verificationCode,
+        credentialId: options.credentialId,
+        existingCookies: options.existingCookies,
+      });
+
+      if (loginResult.needs2FA) {
+        return driver;
+      }
+
+      if (loginResult.success) {
+        return driver;
+      }
+
+      await driver.quit();
+
+      if (proxyManager.hasProxies) {
+        await onProgress({
+          type: "status",
+          message: `Login failed on proxy ${proxyManager.proxyIndex + 1} — rotating...`,
+        });
+        proxyManager.rotate();
+        continue;
+      }
+
+      throw new Error(`Login failed: ${loginResult.error}`);
+    } catch (err: any) {
+      await driver.quit();
+      if (!proxyManager.hasProxies) throw err;
+      await onProgress({
+        type: "status",
+        message: `Login error on proxy ${proxyManager.proxyIndex + 1} — rotating...`,
+      });
+      proxyManager.rotate();
+    }
+  }
+}
+
+async function handle2FA(
+  driver: import("selenium-webdriver").WebDriver,
+  credentialId: string,
+  onProgress: ProgressCallback,
+): Promise<void> {
+  await onProgress({
+    type: "2fa_required",
+    credentialId,
+    message: "Verification code required",
+  });
+
+  const code = await createChallenge(credentialId);
+  await onProgress({ type: "status", message: "Submitting 2FA code..." });
+
+  const nativeSet = `const el = arguments[0]; const val = arguments[1];
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+    if (setter) { setter.call(el, val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true })); }`;
+
+  const focused = await driver.executeScript("return document.activeElement");
+  if (focused) {
+    await driver.executeScript(nativeSet, focused, code);
+    await new Promise((r) => setTimeout(r, 1000));
+    await driver.executeScript(`
+      const spans = document.querySelectorAll('span');
+      for (const s of spans) {
+        const txt = s.textContent.trim().toLowerCase();
+        if (txt === 'log in' || txt === 'continue' || txt === 'confirm' || txt === 'verify' || txt === 'next') {
+          let el = s;
+          while (el.parentElement && el.parentElement.tagName !== 'BODY') {
+            if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
+              el.parentElement.click();
+              return;
+            }
+            el = el.parentElement;
+          }
+        }
+      }
+    `);
+    await driver.wait(() => driver.executeScript("return !!document.querySelector('section main')"), 20000);
+
+    if (credentialId) {
+      const { saveSession } = await import("@/lib/db/utils/instagram");
+      const cookies = await extractCookies(driver);
+      await saveSession(credentialId, {
+        cookies,
+        userAgent: "Chrome",
+        savedAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      });
+    }
+  } else {
+    throw new Error("No focused element for 2FA code");
+  }
+}
+
 export async function extractFollowersStream(options: StreamOptions, onProgress: ProgressCallback): Promise<void> {
-  const driver = await createDriver();
+  const proxyManager = new ProxyManager();
 
   let totalFollowers = 0;
   let totalEstimatedFollowers = 0;
@@ -71,283 +208,284 @@ export async function extractFollowersStream(options: StreamOptions, onProgress:
   let duplicateCount = 0;
   let processedCount = 0;
   const totalCount = options.usernames.length;
+  let rotationCount = 0;
+  let callCount = 0;
 
-  try {
+  if (proxyManager.hasProxies) {
     await onProgress({
-      type: "status",
-      message: "Logging into Instagram...",
+      type: "proxy_rotate",
+      proxyIndex: proxyManager.proxyIndex,
+      totalProxies: proxyManager.totalProxies,
+      callsOnProxy: 0,
+      rotationCount: 0,
+      message: `Starting with proxy ${proxyManager.proxyIndex + 1}/${proxyManager.totalProxies}`,
       processedCount,
       totalCount,
     });
+  }
 
-    const loginResult = await loginToInstagram(driver, {
-      username: options.credentials.username,
-      password: options.credentials.password,
-      verificationCode: options.credentials.verificationCode,
-      credentialId: options.credentialId,
-      existingCookies: options.existingCookies,
-    });
+  const queue = [...options.usernames];
+  const active: ProfileState[] = [];
+  const doneUsernames = new Set<string>();
 
-    if (loginResult.needs2FA) {
-      await onProgress({
-        type: "2fa_required",
-        credentialId: options.credentialId,
-        message: "Verification code required. Check your email or authenticator app.",
-      });
+  let driver = await loginWithRetry(proxyManager, options, onProgress);
+  let driverNeeds2FA = false;
 
-      if (!options.credentialId) {
-        await onProgress({ type: "error", error: "No credential ID for 2FA challenge" });
-        return;
-      }
+  while (queue.length > 0 || active.length > 0) {
+    const slotCount = CONCURRENCY - active.length;
+    for (let i = 0; i < slotCount && queue.length > 0; i++) {
+      const username = queue.shift()!;
 
-      try {
-        const code = await createChallenge(options.credentialId);
-
-        await onProgress({ type: "status", message: "Submitting verification code..." });
-
-        const nativeSet = `const el = arguments[0]; const val = arguments[1];
-          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
-          if (setter) { setter.call(el, val);
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true })); }`;
-
-        const focused = await driver.executeScript("return document.activeElement");
-        if (focused) {
-          await driver.executeScript(nativeSet, focused, code);
-          await new Promise((r) => setTimeout(r, 1000));
-
-          await driver.executeScript(`
-            const spans = document.querySelectorAll('span');
-            for (const s of spans) {
-              const txt = s.textContent.trim().toLowerCase();
-              if (txt === 'log in' || txt === 'continue' || txt === 'confirm' || txt === 'verify' || txt === 'next') {
-                let el = s;
-                while (el.parentElement && el.parentElement.tagName !== 'BODY') {
-                  if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
-                    el.parentElement.click();
-                    return;
-                  }
-                  el = el.parentElement;
-                }
-              }
-            }
-          `);
-
-          await driver.wait(() => driver.executeScript("return !!document.querySelector('section main')"), 20000);
-
-          if (options.credentialId) {
-            const { saveSession } = await import("@/lib/db/utils/instagram");
-            const cookies = await extractCookies(driver);
-            await saveSession(options.credentialId, {
-              cookies,
-              userAgent: "Chrome",
-              savedAt: new Date(),
-              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            });
-          }
-        } else {
-          await onProgress({ type: "error", error: "No focused element for 2FA code" });
-          return;
-        }
-      } catch {
-        await onProgress({ type: "error", error: "2FA challenge timed out" });
-        return;
-      }
-    } else if (!loginResult.success) {
-      await onProgress({ type: "error", error: `Login failed: ${loginResult.error}` });
-      return;
-    }
-
-    await onProgress({
-      type: "status",
-      message: "Login successful — starting extraction",
-      processedCount,
-      totalCount,
-    });
-
-    const ctx: VariableContext = {
-      credentials: options.credentials,
-      profile: { username: "" },
-    };
-    const engine = new ScrapingEngine(driver, ctx);
-
-    for (let i = 0; i < options.usernames.length; i++) {
-      const targetUsername = options.usernames[i];
-      processedCount = i + 1;
-
-      const alreadyScraped = await isProfileAlreadyScraped(targetUsername);
+      const alreadyScraped = await isProfileAlreadyScraped(username);
       if (alreadyScraped) {
+        processedCount++;
+        doneUsernames.add(username);
         await onProgress({
           type: "skipped",
-          profileUsername: targetUsername,
-          message: `@${targetUsername} already scraped — skipping`,
+          profileUsername: username,
+          message: `@${username} already scraped — skipping`,
           processedCount,
           totalCount,
         });
         continue;
       }
 
+      active.push({
+        username,
+        cursor: null,
+        page: 0,
+        totalFetched: 0,
+        estimatedTotal: 0,
+        done: false,
+        isPrivate: false,
+        invalid: false,
+        profilePicUrl: "",
+        userId: "",
+      });
+
       await onProgress({
-        type: "status",
-        profileUsername: targetUsername,
-        message: `[${processedCount}/${totalCount}] Fetching followers for @${targetUsername} via API...`,
+        type: "concurrent_status",
+        message: `Profiles: ${doneUsernames.size} done, ${active.length} active, ${queue.length} queued`,
         processedCount,
         totalCount,
       });
+    }
 
-      let profilePicUrl = "";
-      let extractedCount = 0;
+    if (active.length === 0) break;
 
+    const profile = active[0];
+
+    if (driverNeeds2FA && options.credentialId) {
+      await handle2FA(driver, options.credentialId, onProgress);
+      driverNeeds2FA = false;
+    }
+
+    if (!profile.userId) {
       try {
-        const existingFollowers = await getExistingFollowerUsernames(targetUsername);
-
-        const result = await extractFollowersGraphQLViaDriver(driver, targetUsername, async (gqlEvent) => {
-          if (gqlEvent.page === 1 && gqlEvent.estimatedTotal > 0) {
-            totalEstimatedFollowers += gqlEvent.estimatedTotal;
-          }
-
-          await onProgress({
-            type: "status",
-            profileUsername: targetUsername,
-            message: gqlEvent.message,
-            page: gqlEvent.page,
-            totalPages: gqlEvent.totalPages,
-            estimatedTotal: gqlEvent.estimatedTotal,
-            totalEstimatedFollowers,
-            processedCount,
-            totalCount,
-          });
-
-          if (gqlEvent.followerUsername) {
-            const username = gqlEvent.followerUsername;
-            if (existingFollowers.has(username)) {
-              duplicateCount++;
-            } else {
-              existingFollowers.add(username);
-              await upsertFollower(targetUsername, username, undefined, gqlEvent.avatarUrl);
-              extractedCount++;
-              totalFollowers++;
-            }
-
-            await onProgress({
-              type: "follower",
-              profileUsername: targetUsername,
-              followerUsername: username,
-              count: extractedCount,
-              totalFollowers,
-              totalEstimatedFollowers,
-              duplicateCount,
-              invalidCount,
-              processedCount,
-              totalCount,
-            });
-          }
+        await onProgress({
+          type: "status",
+          profileUsername: profile.username,
+          message: `Resolving @${profile.username}...`,
+          processedCount: processedCount + 1,
+          totalCount,
         });
 
-        if (result.isPrivate) {
-          await markProfilePrivate(targetUsername);
+        const info = await resolveProfileInfoViaDriver(driver, profile.username);
+        profile.userId = info.id;
+        profile.isPrivate = info.isPrivate;
+        profile.profilePicUrl = info.profilePicUrl;
+        callCount++;
+
+        if (info.isPrivate) {
+          await markProfilePrivate(profile.username);
           privateCount++;
+          profile.done = true;
+          active.shift();
+          processedCount++;
+          doneUsernames.add(profile.username);
           await onProgress({
             type: "private",
-            profileUsername: targetUsername,
-            message: `@${targetUsername} is private — skipping`,
+            profileUsername: profile.username,
+            message: `@${profile.username} is private — skipping`,
             privateCount,
             processedCount,
             totalCount,
           });
           continue;
         }
+      } catch (err: any) {
+        if (err.message?.includes("PROFILE_NOT_FOUND")) {
+          await markProfileInvalid(profile.username);
+          invalidCount++;
+          profile.done = true;
+          active.shift();
+          processedCount++;
+          doneUsernames.add(profile.username);
+          await onProgress({
+            type: "invalid",
+            profileUsername: profile.username,
+            message: `@${profile.username} not found`,
+            invalidCount,
+            processedCount,
+            totalCount,
+          });
+          continue;
+        }
+        throw err;
+      }
+    }
 
-        profilePicUrl = result.profilePicUrl;
+    if (profile.done) {
+      active.shift();
+      continue;
+    }
+
+    try {
+      const existingFollowers = await getExistingFollowerUsernames(profile.username);
+
+      const result = await fetchFollowersPageViaDriver(driver, profile.userId, profile.cursor ?? undefined);
+      callCount++;
+
+      if (profile.page === 0) {
+        profile.estimatedTotal = result.estimatedTotal;
+        totalEstimatedFollowers += result.estimatedTotal;
+      }
+
+      profile.page++;
+      profile.cursor = result.endCursor;
+
+      const totalPages = Math.ceil(profile.estimatedTotal / 50);
+
+      for (const entry of result.usernames) {
+        profile.totalFetched++;
+        if (existingFollowers.has(entry.username)) {
+          duplicateCount++;
+        } else {
+          existingFollowers.add(entry.username);
+          await upsertFollower(profile.username, entry.username, undefined, entry.profilePicUrl || undefined);
+          totalFollowers++;
+        }
+      }
+
+      await onProgress({
+        type: "follower",
+        profileUsername: profile.username,
+        followerUsername: undefined,
+        count: profile.totalFetched,
+        totalFollowers,
+        totalEstimatedFollowers,
+        duplicateCount,
+        invalidCount,
+        processedCount: processedCount + 1,
+        totalCount,
+        page: profile.page,
+        totalPages,
+        estimatedTotal: profile.estimatedTotal,
+        callsOnProxy: callCount,
+        proxyIndex: proxyManager.proxyIndex,
+        rotationCount,
+      });
+
+      await onProgress({
+        type: "status",
+        profileUsername: profile.username,
+        message: `Page ${profile.page}/${totalPages} — ${profile.totalFetched} followers from @${profile.username}`,
+        page: profile.page,
+        totalPages,
+        estimatedTotal: profile.estimatedTotal,
+        totalEstimatedFollowers,
+        processedCount: processedCount + 1,
+        totalCount,
+        callsOnProxy: callCount,
+        proxyIndex: proxyManager.proxyIndex,
+        rotationCount,
+      });
+
+      if (!result.hasNextPage) {
+        profile.done = true;
+        processedCount++;
+        doneUsernames.add(profile.username);
+
+        await updateTargetProfileScraped(profile.username, profile.totalFetched, profile.profilePicUrl);
 
         await onProgress({
-          type: "follower",
-          profileUsername: targetUsername,
-          followerUsername: undefined,
-          count: extractedCount,
+          type: "status",
+          profileUsername: profile.username,
+          message: `Done — ${profile.totalFetched} followers from @${profile.username}`,
           totalFollowers,
           duplicateCount,
           invalidCount,
           processedCount,
           totalCount,
         });
-      } catch (err: any) {
-        const msg = err.message || "";
-        if (msg.includes("PROFILE_NOT_FOUND")) {
-          await markProfileInvalid(targetUsername);
-          invalidCount++;
-          await onProgress({
-            type: "invalid",
-            profileUsername: targetUsername,
-            message: `@${targetUsername} not found`,
-            invalidCount,
-            processedCount,
-            totalCount,
-          });
-        } else {
-          await onProgress({
-            type: "status",
-            profileUsername: targetUsername,
-            message: `@${targetUsername}: API error — ${msg} — skipping`,
-            processedCount,
-            totalCount,
-          });
-        }
-        continue;
+
+        active.shift();
+      } else {
+        await browserSleep(driver, REQUEST_DELAY_MS);
       }
-
-      await updateTargetProfileScraped(targetUsername, extractedCount, profilePicUrl);
-
+    } catch (err: any) {
       await onProgress({
         type: "status",
-        profileUsername: targetUsername,
-        message: `Done — extracted ${extractedCount} followers from @${targetUsername}`,
-        totalFollowers,
-        duplicateCount,
-        invalidCount,
+        profileUsername: profile.username,
+        message: `@${profile.username}: page error — ${err.message?.slice(0, 100)} — will retry on next cycle`,
+        processedCount,
+        totalCount,
+      });
+    }
+
+    if (callCount >= CALLS_PER_PROXY && proxyManager.hasProxies) {
+      callCount = 0;
+      rotationCount++;
+
+      await driver.quit();
+
+      const newProxy = proxyManager.rotate();
+
+      await onProgress({
+        type: "proxy_rotate",
+        proxyIndex: proxyManager.proxyIndex,
+        totalProxies: proxyManager.totalProxies,
+        callsOnProxy: 0,
+        rotationCount,
+        message: newProxy
+          ? `Rotated to proxy ${proxyManager.proxyIndex + 1}/${proxyManager.totalProxies} (rotation #${rotationCount})`
+          : `No more proxies — continuing on same IP (rotation #${rotationCount})`,
         processedCount,
         totalCount,
       });
 
-      if ((i + 1) % REEL_SCROLL_INTERVAL === 0 && i < options.usernames.length - 1) {
-        await onProgress({
-          type: "status",
-          message: `Scrolling reels to avoid detection (${processedCount}/${totalCount} profiles done)...`,
-          processedCount,
-          totalCount,
-        });
+      await onProgress({
+        type: "reconnecting",
+        message: newProxy
+          ? `Re-logging through proxy ${proxyManager.proxyIndex + 1}/${proxyManager.totalProxies}...`
+          : "Re-logging...",
+        processedCount,
+        totalCount,
+      });
 
-        const reelDef = await engine.loadDefinition(REELS_YAML);
-        await engine.execute(reelDef);
+      driver = await loginWithRetry(proxyManager, options, onProgress);
 
-        await onProgress({
-          type: "status",
-          message: `Reel scroll done — continuing extraction`,
-          processedCount,
-          totalCount,
-        });
-      }
+      await onProgress({
+        type: "status",
+        message: `Reconnected — resuming ${active.length} active profiles`,
+        processedCount,
+        totalCount,
+      });
     }
-
-    await onProgress({
-      type: "done",
-      message: "Extraction complete",
-      totalFollowers,
-      totalEstimatedFollowers,
-      invalidCount,
-      privateCount,
-      duplicateCount,
-      processedCount,
-      totalCount,
-    });
-  } catch (error: any) {
-    await onProgress({
-      type: "error",
-      error: error.message || "Unknown error during extraction",
-      processedCount,
-      totalCount,
-    });
-  } finally {
-    await driver.quit();
   }
+
+  await driver.quit();
+
+  await onProgress({
+    type: "done",
+    message: `Extraction complete — ${rotationCount} proxy rotations`,
+    totalFollowers,
+    totalEstimatedFollowers,
+    invalidCount,
+    privateCount,
+    duplicateCount,
+    processedCount,
+    totalCount,
+    rotationCount,
+  });
 }

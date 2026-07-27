@@ -1,12 +1,12 @@
 import type { WebDriver } from "selenium-webdriver";
 
-const QUERY_HASH = "37479f2b8209594dde7facb0d904896a";
-const X_IG_APP_ID = "936619743392459";
-const PAGE_SIZE = 50;
-const REQUEST_DELAY_MS = 5000;
-const MAX_REQUESTS_PER_SESSION = 200;
+export const QUERY_HASH = "37479f2b8209594dde7facb0d904896a";
+export const X_IG_APP_ID = "936619743392459";
+export const PAGE_SIZE = 50;
+export const REQUEST_DELAY_MS = 5000;
+export const MAX_REQUESTS_PER_SESSION = 200;
 
-async function browserSleep(driver: WebDriver, ms: number): Promise<void> {
+export async function browserSleep(driver: WebDriver, ms: number): Promise<void> {
   await driver.executeAsyncScript(`
     const ms = arguments[0];
     const done = arguments[1];

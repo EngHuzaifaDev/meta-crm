@@ -40,7 +40,19 @@ interface FollowerEntry {
 }
 
 interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "2fa_required";
+  type:
+    | "status"
+    | "follower"
+    | "invalid"
+    | "duplicate"
+    | "skipped"
+    | "private"
+    | "done"
+    | "error"
+    | "2fa_required"
+    | "proxy_rotate"
+    | "reconnecting"
+    | "concurrent_status";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -57,6 +69,10 @@ interface ProgressEvent {
   totalPages?: number;
   estimatedTotal?: number;
   totalEstimatedFollowers?: number;
+  proxyIndex?: number;
+  totalProxies?: number;
+  callsOnProxy?: number;
+  rotationCount?: number;
 }
 
 interface ScrapedSource {
@@ -82,6 +98,11 @@ export default function ExtractorPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [estimatedTotal, setEstimatedTotal] = useState(0);
   const [totalEstimatedFollowers, setTotalEstimatedFollowers] = useState(0);
+  const [proxyIndex, setProxyIndex] = useState(0);
+  const [totalProxies, setTotalProxies] = useState(0);
+  const [callsOnProxy, setCallsOnProxy] = useState(0);
+  const [rotationCount, setRotationCount] = useState(0);
+  const [concurrentStatus, setConcurrentStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [show2FA, setShow2FA] = useState(false);
@@ -310,12 +331,27 @@ export default function ExtractorPage() {
         if (counts.duplicateCount !== undefined) setDuplicateCount(counts.duplicateCount);
         if (counts.processedCount !== undefined) setProcessedCount(counts.processedCount);
         if (counts.totalCount !== undefined) setTotalCount(counts.totalCount);
-        getScrapedSourcesAction().then((r) => {
+        await getScrapedSourcesAction().then((r) => {
           setScrapedSources(r.sources);
           setScrapedSourcesTotal(r.total);
           setScrapedSourcesMore(r.hasMore);
         });
         if (pollRef.current) clearInterval(pollRef.current);
+        break;
+      case "proxy_rotate":
+        setStatus(last.message || null);
+        if (last.proxyIndex !== undefined) setProxyIndex(last.proxyIndex);
+        if (last.totalProxies !== undefined) setTotalProxies(last.totalProxies);
+        if (last.callsOnProxy !== undefined) setCallsOnProxy(last.callsOnProxy);
+        if (last.rotationCount !== undefined) setRotationCount(last.rotationCount);
+        break;
+      case "reconnecting":
+        setStatus(last.message || null);
+        break;
+      case "concurrent_status":
+        setConcurrentStatus(last.message || null);
+        if (last.processedCount !== undefined) setProcessedCount(last.processedCount);
+        if (last.totalCount !== undefined) setTotalCount(last.totalCount);
         break;
       case "error":
         setError(last.error || "Unknown error");
@@ -607,7 +643,28 @@ export default function ExtractorPage() {
                   Complete
                 </Badge>
               )}
+              {totalProxies > 0 && (
+                <Badge
+                  variant="outline"
+                  className="gap-1 border-blue-300 text-blue-600 text-sm dark:border-blue-800 dark:text-blue-400"
+                >
+                  <span>
+                    Proxy {proxyIndex + 1}/{totalProxies}
+                  </span>
+                </Badge>
+              )}
+              {rotationCount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="gap-1 border-orange-300 text-orange-600 text-sm dark:border-orange-800 dark:text-orange-400"
+                >
+                  <span>
+                    {rotationCount} rotation{callsOnProxy > 0 ? ` (${callsOnProxy} calls)` : ""}
+                  </span>
+                </Badge>
+              )}
             </div>
+            {concurrentStatus && running && <div className="text-muted-foreground text-xs">{concurrentStatus}</div>}
           </CardContent>
         </Card>
       )}
