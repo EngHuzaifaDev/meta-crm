@@ -2,7 +2,7 @@ import type { WebDriver } from "selenium-webdriver";
 
 const QUERY_HASH = "37479f2b8209594dde7facb0d904896a";
 const X_IG_APP_ID = "936619743392459";
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 250;
 const REQUEST_DELAY_MS = 5000;
 const MAX_REQUESTS_PER_SESSION = 200;
 
