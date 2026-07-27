@@ -27,8 +27,13 @@ import {
   resolve2FAAction,
 } from "@/server/instagram/actions";
 
+interface FollowerEntry {
+  username: string
+  avatarUrl?: string
+}
+
 interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "done" | "error" | "2fa_required";
+  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "done" | "error" | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -46,7 +51,7 @@ export default function ExtractorPage() {
   const [usernames, setUsernames] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [followers, setFollowers] = useState<string[]>([]);
+  const [followers, setFollowers] = useState<FollowerEntry[]>([]);
   const [totalFollowers, setTotalFollowers] = useState(0);
   const [invalidCount, setInvalidCount] = useState(0);
   const [duplicateCount, setDuplicateCount] = useState(0);
@@ -79,26 +84,42 @@ export default function ExtractorPage() {
     const last = state.lastEvent;
     if (!last) return;
 
+    const counts = {
+      totalFollowers: last.totalFollowers,
+      invalidCount: last.invalidCount,
+      duplicateCount: last.duplicateCount,
+      processedCount: last.processedCount,
+      totalCount: last.totalCount,
+    }
+
     switch (last.type) {
       case "status":
         setStatus(last.message || null);
-        setProcessedCount(last.processedCount ?? 0);
-        setTotalCount(last.totalCount ?? 0);
+        if (counts.totalFollowers !== undefined) setTotalFollowers(counts.totalFollowers);
+        if (counts.invalidCount !== undefined) setInvalidCount(counts.invalidCount);
+        if (counts.duplicateCount !== undefined) setDuplicateCount(counts.duplicateCount);
+        setProcessedCount(counts.processedCount ?? 0);
+        setTotalCount(counts.totalCount ?? 0);
         break;
       case "follower":
-        setFollowers((prev) => [...prev, last.followerUsername!]);
-        setTotalFollowers(last.totalFollowers ?? 0);
-        setDuplicateCount(last.duplicateCount ?? 0);
-        setInvalidCount(last.invalidCount ?? 0);
-        setProcessedCount(last.processedCount ?? 0);
-        setTotalCount(last.totalCount ?? 0);
+        setFollowers((prev) => [...prev, { username: last.followerUsername! }]);
+        setTotalFollowers(counts.totalFollowers ?? 0);
+        setDuplicateCount(counts.duplicateCount ?? 0);
+        setInvalidCount(counts.invalidCount ?? 0);
+        setProcessedCount(counts.processedCount ?? 0);
+        setTotalCount(counts.totalCount ?? 0);
         break;
       case "invalid":
-        setInvalidCount(last.invalidCount ?? 0);
-        setProcessedCount(last.processedCount ?? 0);
+        if (counts.invalidCount !== undefined) setInvalidCount(counts.invalidCount);
+        setProcessedCount(counts.processedCount ?? 0);
         break;
       case "duplicate":
-        setDuplicateCount(last.duplicateCount ?? 0);
+        if (counts.duplicateCount !== undefined) setDuplicateCount(counts.duplicateCount);
+        break;
+      case "skipped":
+        setStatus(last.message || null);
+        setProcessedCount(counts.processedCount ?? 0);
+        setTotalCount(counts.totalCount ?? 0);
         break;
       case "2fa_required":
         setShow2FA(true);
@@ -109,6 +130,11 @@ export default function ExtractorPage() {
         setStatus("Extraction complete");
         setDone(true);
         setRunning(false);
+        if (counts.totalFollowers !== undefined) setTotalFollowers(counts.totalFollowers);
+        if (counts.invalidCount !== undefined) setInvalidCount(counts.invalidCount);
+        if (counts.duplicateCount !== undefined) setDuplicateCount(counts.duplicateCount);
+        if (counts.processedCount !== undefined) setProcessedCount(counts.processedCount);
+        if (counts.totalCount !== undefined) setTotalCount(counts.totalCount);
         if (pollRef.current) clearInterval(pollRef.current);
         break;
       case "error":
@@ -300,15 +326,28 @@ export default function ExtractorPage() {
       {followers.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Extracted Followers ({followers.length})</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Extracted Followers ({followers.length})
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <ScrollArea className="h-64 rounded border p-2">
               <div className="space-y-1">
                 {followers.map((f, i) => (
-                  <div key={`${f}-${i}`} className="flex items-center gap-2 text-sm">
-                    <Users className="h-3 w-3 text-muted-foreground shrink-0" />
-                    <span>@{f}</span>
+                  <div key={`${f.username}-${i}`} className="flex items-center gap-2.5 text-sm px-2 py-1.5 rounded hover:bg-muted/50">
+                    {f.avatarUrl ? (
+                      <img
+                        src={f.avatarUrl}
+                        alt=""
+                        className="h-7 w-7 rounded-full object-cover shrink-0"
+                      />
+                    ) : (
+                      <div className="h-7 w-7 rounded-full bg-muted shrink-0 flex items-center justify-center">
+                        <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <span>@{f.username}</span>
                   </div>
                 ))}
               </div>

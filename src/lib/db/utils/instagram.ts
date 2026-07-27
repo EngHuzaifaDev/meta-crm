@@ -146,6 +146,24 @@ export async function getFollowersForProfile(profileUsername: string): Promise<I
   return followersCol.find({ sourceProfileUsername: profileUsername }).sort({ appearanceCount: -1 }).toArray();
 }
 
+export async function getExistingFollowerUsernames(sourceProfileUsername: string): Promise<Set<string>> {
+  const docs = await followersCol
+    .find(
+      { sourceProfileUsername },
+      { projection: { followerUsername: 1 } },
+    )
+    .toArray()
+  return new Set(docs.map((d) => d.followerUsername))
+}
+
+export async function isProfileAlreadyScraped(profileUsername: string): Promise<boolean> {
+  const profile = await targetProfilesCol.findOne(
+    { profileUsername, lastScrapedAt: { $ne: null } },
+    { projection: { _id: 1 } },
+  )
+  return !!profile
+}
+
 export async function updateTargetProfileScraped(profileUsername: string, followerCount: number): Promise<void> {
   await targetProfilesCol.updateOne(
     { profileUsername },

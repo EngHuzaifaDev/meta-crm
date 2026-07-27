@@ -2,7 +2,7 @@ import { createDriver } from "./driver";
 import { loginToInstagram } from "./login";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
-import { upsertFollower, updateTargetProfileScraped } from "@/lib/db/utils/instagram";
+import { upsertFollower, updateTargetProfileScraped, getExistingFollowerUsernames, isProfileAlreadyScraped } from "@/lib/db/utils/instagram";
 import { createChallenge } from "./challenges";
 import path from "node:path";
 
@@ -14,7 +14,7 @@ const REELS_YAML = path.join(ACTIONS_DIR, "reels.yaml");
 const REEL_SCROLL_INTERVAL = 5;
 
 export interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "done" | "error" | "2fa_required";
+  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "done" | "error" | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -151,6 +151,18 @@ export async function extractFollowersStream(
       const targetUsername = options.usernames[i];
       processedCount = i + 1;
 
+      const alreadyScraped = await isProfileAlreadyScraped(targetUsername);
+      if (alreadyScraped) {
+        await onProgress({
+          type: "skipped",
+          profileUsername: targetUsername,
+          message: `@${targetUsername} already scraped — skipping`,
+          processedCount,
+          totalCount,
+        });
+        continue;
+      }
+
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
@@ -186,7 +198,7 @@ export async function extractFollowersStream(
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
-        message: `[${processedCount}/${totalCount}] Scrolling followers list for @${targetUsername}...`,
+        message: `[${processedCount}/${totalCount}] Opening followers dialog for @${targetUsername}...`,
         processedCount,
         totalCount,
       });
@@ -194,21 +206,22 @@ export async function extractFollowersStream(
       const followersDef = await engine.loadDefinition(FOLLOWERS_YAML);
       const followersResult = await engine.execute(followersDef);
 
-      const rawFollowers = (followersResult.finalExtract as string[]) || [];
-      const seen = new Set<string>();
+      const rawFollowers = (followersResult.finalExtract as Array<{ username: string; avatarUrl?: string }>) || [];
+
+      const existingFollowers = await getExistingFollowerUsernames(targetUsername);
       let profileCount = 0;
 
-      for (const username of rawFollowers) {
-        const trimmed = username.trim();
+      for (const entry of rawFollowers) {
+        const trimmed = entry.username.trim();
         if (!trimmed) continue;
 
-        if (seen.has(trimmed)) {
+        if (existingFollowers.has(trimmed)) {
           duplicateCount++;
           continue;
         }
-        seen.add(trimmed);
+        existingFollowers.add(trimmed);
 
-        await upsertFollower(targetUsername, trimmed);
+        await upsertFollower(targetUsername, trimmed, undefined, entry.avatarUrl);
         profileCount++;
         totalFollowers++;
 
