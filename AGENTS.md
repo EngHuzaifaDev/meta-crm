@@ -89,9 +89,8 @@ Required (from `.env.example`):
 - `SELENIUM_GRID_URL` (default: `http://selenium-hub:4444`)
 
 ## Docker
-- Dev: `compose.yml` (port 3003, hot-reload)
+- Dev: `docker compose up` — `compose.yml` spins up Selenium Hub, Chrome node, and the Next.js dev server (port 3003, hot-reload via volume mount)
 - Prod: `compose.prod.yml` (port 3004)
-- Both require external `mongodb-network` and `selenium-network` (named `autolog_selenium_public`)
 
 ## Style
 - **Biome** (not ESLint/Prettier). Config at `biome.json` — includes import sorting groups, `useSortedClasses` for Tailwind, strict naming convention (`useFilenamingConvention: error`)
