@@ -8,7 +8,7 @@ actions:
 
   - id: checkProfileError
     action: ifExists
-    selector: "//h2[contains(text(), 'Sorry')]"
+    selector: "//span[text()=\"Sorry, this page isn't available.\"]"
     timeout: 5000
     then:
       - id: profileNotFound

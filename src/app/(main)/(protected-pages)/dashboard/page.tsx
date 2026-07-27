@@ -48,6 +48,7 @@ interface ProgressEvent {
   count?: number;
   totalFollowers?: number;
   invalidCount?: number;
+  privateCount?: number;
   duplicateCount?: number;
   processedCount?: number;
   totalCount?: number;
@@ -80,7 +81,7 @@ export default function ExtractorPage() {
   const [pendingCredentialId, setPendingCredentialId] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState("");
   const [submitting2FA, setSubmitting2FA] = useState(false);
-  const [scrapedStatus, setScrapedStatus] = useState<Record<string, "scraped" | "private" | null>>({});
+  const [scrapedStatus, setScrapedStatus] = useState<Record<string, "scraped" | "private" | "invalid" | null>>({});
   const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
   const [scrapedSourcesTotal, setScrapedSourcesTotal] = useState(0);
   const [scrapedSourcesMore, setScrapedSourcesMore] = useState(false);
@@ -105,22 +106,20 @@ export default function ExtractorPage() {
     });
   }, []);
 
-  const validateTags = useCallback(async (newTags: string[]) => {
-    if (!newTags.length) return;
-    const result = await checkScrapedSourcesAction(newTags);
-    setScrapedStatus((prev) => ({ ...prev, ...result }));
-  }, []);
-
   const addTag = useCallback(
-    (val: string) => {
+    async (val: string) => {
       const trimmed = val.trim().toLowerCase().replace(/[^a-z0-9._]/g, "");
       if (!trimmed || tags.includes(trimmed)) return;
-      const next = [...tags, trimmed];
-      setTags(next);
+      const result = await checkScrapedSourcesAction([trimmed]);
+      const status = result[trimmed];
+      if (status) {
+        setScrapedStatus((prev) => ({ ...prev, [trimmed]: status }));
+        return;
+      }
+      setTags((prev) => [...prev, trimmed]);
       setInputVal("");
-      validateTags(next);
     },
-    [tags, validateTags],
+    [tags],
   );
 
   const removeTag = useCallback((idx: number) => {
@@ -147,27 +146,30 @@ export default function ExtractorPage() {
   );
 
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
+    async (e: React.ClipboardEvent) => {
       e.preventDefault();
       const text = e.clipboardData.getData("text");
       const parts = text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
       if (!parts.length) return;
-      const next = [...tags];
-      let added = 0;
-      for (const p of parts) {
-        const cleaned = p.toLowerCase().replace(/[^a-z0-9._]/g, "");
-        if (cleaned && !next.includes(cleaned)) {
-          next.push(cleaned);
-          added++;
+      const cleaned = parts.map((p) => p.toLowerCase().replace(/[^a-z0-9._]/g, "")).filter(Boolean);
+      const existing = new Set(tags);
+      const unknowns = cleaned.filter((c) => !existing.has(c));
+      if (!unknowns.length) return;
+      const statuses = await checkScrapedSourcesAction(unknowns);
+      const toAdd: string[] = [];
+      for (const u of unknowns) {
+        if (statuses[u]) {
+          setScrapedStatus((prev) => ({ ...prev, [u]: statuses[u] }));
+        } else {
+          toAdd.push(u);
         }
       }
-      if (added > 0) {
-        setTags(next);
-        setInputVal("");
-        validateTags(next);
+      if (toAdd.length > 0) {
+        setTags((prev) => [...prev, ...toAdd]);
       }
+      setInputVal("");
     },
-    [tags, validateTags],
+    [tags],
   );
 
   const handleFileUpload = useCallback(
@@ -175,29 +177,32 @@ export default function ExtractorPage() {
       const file = e.target.files?.[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = (ev) => {
+      reader.onload = async (ev) => {
         const text = ev.target?.result as string;
         if (!text) return;
         const lines = text.split(/[\n\r]+/).filter(Boolean);
         const keys = lines.flatMap((line) => line.split(",").map((s) => s.trim().replace(/^["']|["']$/g, ""))).filter(Boolean);
-        const next = [...tags];
-        let added = 0;
-        for (const k of keys) {
-          const cleaned = k.toLowerCase().replace(/[^a-z0-9._]/g, "");
-          if (cleaned && !next.includes(cleaned)) {
-            next.push(cleaned);
-            added++;
-          }
-        }
-        if (added > 0) {
-          setTags(next);
-          validateTags(next);
-        }
+        const cleaned = keys.map((k) => k.toLowerCase().replace(/[^a-z0-9._]/g, "")).filter(Boolean);
+        setTags((prev) => {
+          const existing = new Set(prev);
+          const unknowns = cleaned.filter((c) => !existing.has(c));
+          if (!unknowns.length) return prev;
+          checkScrapedSourcesAction(unknowns).then((statuses) => {
+            const toAdd = unknowns.filter((u) => !statuses[u]);
+            for (const u of unknowns) {
+              if (statuses[u]) setScrapedStatus((prev2) => ({ ...prev2, [u]: statuses[u] }));
+            }
+            if (toAdd.length > 0) {
+              setTags((prev2) => [...prev2, ...toAdd]);
+            }
+          });
+          return prev;
+        });
       };
       reader.readAsText(file);
       e.target.value = "";
     },
-    [tags, validateTags],
+    [tags],
   );
 
   const downloadCSV = useCallback(() => {
@@ -262,7 +267,8 @@ export default function ExtractorPage() {
         setTotalCount(counts.totalCount ?? 0);
         break;
       case "private":
-        setPrivateCount((prev) => prev + 1);
+        if (last.privateCount !== undefined) setPrivateCount(last.privateCount);
+        else setPrivateCount((prev) => prev + 1);
         setStatus(last.message || null);
         setProcessedCount(counts.processedCount ?? 0);
         setTotalCount(counts.totalCount ?? 0);
@@ -379,15 +385,17 @@ export default function ExtractorPage() {
               const status = scrapedStatus[t];
               const isScraped = status === "scraped";
               const isPrivate = status === "private";
+              const isInvalid = status === "invalid";
               return (
                 <span
                   key={t}
                   data-status={status ?? ""}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 text-xs font-medium data-[status=scraped]:border-amber-300 data-[status=scraped]:bg-amber-50 dark:data-[status=scraped]:bg-amber-950/30 data-[status=private]:border-violet-300 data-[status=private]:bg-violet-50 dark:data-[status=private]:bg-violet-950/30"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 text-xs font-medium data-[status=scraped]:border-amber-300 data-[status=scraped]:bg-amber-50 dark:data-[status=scraped]:bg-amber-950/30 data-[status=private]:border-violet-300 data-[status=private]:bg-violet-50 dark:data-[status=private]:bg-violet-950/30 data-[status=invalid]:border-red-300 data-[status=invalid]:bg-red-50 dark:data-[status=invalid]:bg-red-950/30"
                 >
-                  <span className={isScraped ? "text-amber-600 dark:text-amber-400" : isPrivate ? "text-violet-600 dark:text-violet-400" : ""}>{t}</span>
+                  <span className={isScraped ? "text-amber-600 dark:text-amber-400" : isPrivate ? "text-violet-600 dark:text-violet-400" : isInvalid ? "text-red-600 dark:text-red-400" : ""}>{t}</span>
                   {isScraped && <span className="text-[10px] text-amber-500 font-normal">scraped</span>}
                   {isPrivate && <Lock className="h-3 w-3 text-violet-500" />}
+                  {isInvalid && <Ban className="h-3 w-3 text-red-500" />}
                   {!running && (
                     <button
                       type="button"

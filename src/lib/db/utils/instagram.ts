@@ -28,6 +28,7 @@ export interface InstagramTargetProfile {
   followerCount?: number;
   profilePicUrl?: string;
   isPrivate?: boolean;
+  isInvalid?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -159,15 +160,18 @@ export async function getExistingFollowerUsernames(sourceProfileUsername: string
 }
 
 export async function isProfileAlreadyScraped(profileUsername: string): Promise<boolean> {
-  const [follower, privateProfile] = await Promise.all([
+  const [follower, flag] = await Promise.all([
     followersCol.findOne({ sourceProfileUsername: profileUsername }, { projection: { _id: 1 } }),
-    targetProfilesCol.findOne({ profileUsername, isPrivate: true }, { projection: { _id: 1 } }),
+    targetProfilesCol.findOne(
+      { profileUsername, $or: [{ isPrivate: true }, { isInvalid: true }] },
+      { projection: { _id: 1 } },
+    ),
   ])
-  return !!follower || !!privateProfile
+  return !!follower || !!flag
 }
 
-export async function checkScrapedStatusBatch(usernames: string[]): Promise<Record<string, "scraped" | "private" | null>> {
-  const [followers, privates] = await Promise.all([
+export async function checkScrapedStatusBatch(usernames: string[]): Promise<Record<string, "scraped" | "private" | "invalid" | null>> {
+  const [followers, flags] = await Promise.all([
     followersCol
       .aggregate([
         { $match: { sourceProfileUsername: { $in: usernames } } },
@@ -175,15 +179,22 @@ export async function checkScrapedStatusBatch(usernames: string[]): Promise<Reco
       ])
       .toArray(),
     targetProfilesCol
-      .find({ profileUsername: { $in: usernames }, isPrivate: true }, { projection: { profileUsername: 1 } })
+      .find(
+        { profileUsername: { $in: usernames }, $or: [{ isPrivate: true }, { isInvalid: true }] },
+        { projection: { profileUsername: 1, isPrivate: 1, isInvalid: 1 } },
+      )
       .toArray(),
   ])
   const scraped = new Set(followers.map((d) => String(d._id)))
-  const privateSet = new Set(privates.map((d) => d.profileUsername))
-  const result: Record<string, "scraped" | "private" | null> = {}
+  const lookup: Record<string, "private" | "invalid"> = {}
+  for (const d of flags) {
+    if (d.isPrivate) lookup[d.profileUsername] = "private"
+    else if (d.isInvalid) lookup[d.profileUsername] = "invalid"
+  }
+  const result: Record<string, "scraped" | "private" | "invalid" | null> = {}
   for (const u of usernames) {
     if (scraped.has(u)) result[u] = "scraped"
-    else if (privateSet.has(u)) result[u] = "private"
+    else if (lookup[u]) result[u] = lookup[u]
     else result[u] = null
   }
   return result
@@ -200,6 +211,14 @@ export async function markProfilePrivate(profileUsername: string): Promise<void>
   await targetProfilesCol.updateOne(
     { profileUsername },
     { $set: { isPrivate: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true },
+  )
+}
+
+export async function markProfileInvalid(profileUsername: string): Promise<void> {
+  await targetProfilesCol.updateOne(
+    { profileUsername },
+    { $set: { isInvalid: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
   )
 }
@@ -226,6 +245,7 @@ export async function getScrapedSources(limit = 10): Promise<
         followerCount: 1,
         profilePicUrl: { $ifNull: ['$profile.profilePicUrl', null] },
         isPrivate: { $ifNull: ['$profile.isPrivate', false] },
+        isInvalid: { $ifNull: ['$profile.isInvalid', false] },
       },
     },
   ]

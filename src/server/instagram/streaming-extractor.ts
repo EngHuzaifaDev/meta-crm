@@ -2,7 +2,7 @@ import { createDriver } from "./driver";
 import { loginToInstagram } from "./login";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
-import { upsertFollower, updateTargetProfileScraped, getExistingFollowerUsernames, isProfileAlreadyScraped, markProfilePrivate } from "@/lib/db/utils/instagram";
+import { upsertFollower, updateTargetProfileScraped, getExistingFollowerUsernames, isProfileAlreadyScraped, markProfilePrivate, markProfileInvalid } from "@/lib/db/utils/instagram";
 import { createChallenge } from "./challenges";
 import path from "node:path";
 
@@ -49,6 +49,7 @@ export async function extractFollowersStream(
 
   let totalFollowers = 0;
   let invalidCount = 0;
+  let privateCount = 0;
   let duplicateCount = 0;
   let processedCount = 0;
   const totalCount = options.usernames.length;
@@ -178,11 +179,38 @@ export async function extractFollowersStream(
 
       const engine = new ScrapingEngine(driver, ctx);
 
-      const navDef = await engine.loadDefinition(NAVIGATE_YAML);
-      const navResult = await engine.execute(navDef);
+      let navResult: Record<string, unknown>;
+      try {
+        const navDef = await engine.loadDefinition(NAVIGATE_YAML);
+        navResult = await engine.execute(navDef);
+      } catch (err: any) {
+        const text = await driver.executeScript("return document.body.innerText");
+        if (text?.toLowerCase().includes("sorry, this page isn't available")) {
+          await markProfileInvalid(targetUsername);
+          invalidCount++;
+          await onProgress({
+            type: "invalid",
+            profileUsername: targetUsername,
+            message: `@${targetUsername} not found`,
+            invalidCount,
+            processedCount,
+            totalCount,
+          });
+        } else {
+          await onProgress({
+            type: "status",
+            profileUsername: targetUsername,
+            message: `@${targetUsername}: navigation error — ${err.message || "unknown"} — skipping`,
+            processedCount,
+            totalCount,
+          });
+        }
+        continue;
+      }
 
       const navError = navResult.checkProfileError as { error?: string } | undefined;
       if (navError?.error === "PROFILE_NOT_FOUND") {
+        await markProfileInvalid(targetUsername);
         invalidCount++;
         await onProgress({
           type: "invalid",
@@ -198,10 +226,12 @@ export async function extractFollowersStream(
       const privateError = navResult.checkPrivateProfile as { error?: string } | undefined;
       if (privateError?.error === "PROFILE_IS_PRIVATE") {
         await markProfilePrivate(targetUsername);
+        privateCount++;
         await onProgress({
           type: "private",
           profileUsername: targetUsername,
           message: `@${targetUsername} is private — skipping`,
+          privateCount,
           processedCount,
           totalCount,
         });
@@ -230,10 +260,12 @@ export async function extractFollowersStream(
         );
         if (isPrivate) {
           await markProfilePrivate(targetUsername);
+          privateCount++;
           await onProgress({
             type: "private",
             profileUsername: targetUsername,
             message: `@${targetUsername} is private — skipping`,
+            privateCount,
             processedCount,
             totalCount,
           });
@@ -317,6 +349,7 @@ export async function extractFollowersStream(
       message: "Extraction complete",
       totalFollowers,
       invalidCount,
+      privateCount,
       duplicateCount,
       processedCount,
       totalCount,
