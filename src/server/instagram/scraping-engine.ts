@@ -76,7 +76,8 @@ export class ScrapingEngine {
   private async dispatch(action: ScrapeAction): Promise<unknown> {
     switch (action.action) {
       case "navigate": {
-        await this.driver.get(action.url!);
+        const url = interpolate(action.url!, this.ctx);
+        await this.driver.get(url);
         break;
       }
 
