@@ -26,6 +26,7 @@ export interface InstagramTargetProfile {
   profileUsername: string;
   lastScrapedAt?: Date;
   followerCount?: number;
+  profilePicUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -157,11 +158,83 @@ export async function getExistingFollowerUsernames(sourceProfileUsername: string
 }
 
 export async function isProfileAlreadyScraped(profileUsername: string): Promise<boolean> {
-  const profile = await targetProfilesCol.findOne(
-    { profileUsername, lastScrapedAt: { $ne: null } },
+  const follower = await followersCol.findOne(
+    { sourceProfileUsername: profileUsername },
     { projection: { _id: 1 } },
   )
-  return !!profile
+  return !!follower
+}
+
+export async function checkScrapedStatusBatch(usernames: string[]): Promise<Record<string, boolean>> {
+  const docs = await followersCol
+    .aggregate([
+      { $match: { sourceProfileUsername: { $in: usernames } } },
+      { $group: { _id: '$sourceProfileUsername' } },
+    ])
+    .toArray()
+  const scraped = new Set(docs.map((d) => String(d._id)))
+  const result: Record<string, boolean> = {}
+  for (const u of usernames) result[u] = scraped.has(u)
+  return result
+}
+
+export async function countScrapedSources(): Promise<number> {
+  const docs = await followersCol
+    .aggregate([{ $group: { _id: '$sourceProfileUsername' } }, { $count: 'total' }])
+    .toArray()
+  return docs[0]?.total ?? 0
+}
+
+export async function getScrapedSources(limit = 10): Promise<
+  Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string }>
+> {
+  const pipeline = [
+    { $group: { _id: '$sourceProfileUsername', followerCount: { $sum: 1 } } },
+    { $sort: { followerCount: -1 } },
+    { $limit: limit },
+    {
+      $lookup: {
+        from: 'instagramTargetProfiles',
+        localField: '_id',
+        foreignField: 'profileUsername',
+        as: 'profile',
+      },
+    },
+    { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
+    {
+      $project: {
+        profileUsername: '$_id',
+        followerCount: 1,
+        profilePicUrl: { $ifNull: ['$profile.profilePicUrl', null] },
+      },
+    },
+  ]
+  return followersCol.aggregate(pipeline).toArray() as any
+}
+
+export async function saveSourceProfilePic(
+  profileUsername: string,
+  profilePicUrl: string,
+): Promise<void> {
+  await targetProfilesCol.updateOne(
+    { profileUsername },
+    { $set: { profilePicUrl, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true },
+  )
+}
+
+export async function updateTargetProfileScraped(profileUsername: string, followerCount: number, profilePicUrl?: string): Promise<void> {
+  const $set: Record<string, unknown> = {
+    lastScrapedAt: new Date(),
+    followerCount,
+    updatedAt: new Date(),
+  }
+  if (profilePicUrl) $set.profilePicUrl = profilePicUrl
+  await targetProfilesCol.updateOne(
+    { profileUsername },
+    { $set, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true },
+  );
 }
 
 export async function updateTargetProfileScraped(profileUsername: string, followerCount: number): Promise<void> {

@@ -20,3 +20,7 @@ actions:
     action: wait
     selector: "header section"
     timeout: 10000
+
+  - id: extractProfilePic
+    action: javascript
+    script: "const img = document.querySelector('header img[alt*=\"profile picture\"]'); return img ? img.src : ''"

@@ -203,6 +203,8 @@ export async function extractFollowersStream(
         totalCount,
       });
 
+      const navProfilePic = navResult.extractProfilePic as string | undefined
+
       const followersDef = await engine.loadDefinition(FOLLOWERS_YAML);
       const followersResult = await engine.execute(followersDef);
 
@@ -238,7 +240,7 @@ export async function extractFollowersStream(
         });
       }
 
-      await updateTargetProfileScraped(targetUsername, profileCount);
+      await updateTargetProfileScraped(targetUsername, profileCount, navProfilePic);
 
       await onProgress({
         type: "status",

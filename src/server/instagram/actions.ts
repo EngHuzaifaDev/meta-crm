@@ -259,3 +259,14 @@ export async function stopExtractionAction(runId: string) {
   markStopped(runId);
   return { success: true };
 }
+
+export async function checkScrapedSourcesAction(usernames: string[]) {
+  const { checkScrapedStatusBatch } = await import("@/lib/db/utils/instagram");
+  return checkScrapedStatusBatch(usernames);
+}
+
+export async function getScrapedSourcesAction() {
+  const { getScrapedSources, countScrapedSources } = await import("@/lib/db/utils/instagram");
+  const [sources, total] = await Promise.all([getScrapedSources(10), countScrapedSources()]);
+  return { sources, hasMore: total > 10, total };
+}

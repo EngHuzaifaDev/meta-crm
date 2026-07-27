@@ -6,9 +6,12 @@ import {
   AlertCircle,
   Ban,
   CheckCircle,
+  ChevronDown,
+  ChevronUp,
   Loader2,
   ShieldAlert,
   Users,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -18,18 +21,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 
 import {
   startExtractionAction,
   pollExtractionAction,
   stopExtractionAction,
   resolve2FAAction,
+  checkScrapedSourcesAction,
+  getScrapedSourcesAction,
 } from "@/server/instagram/actions";
 
 interface FollowerEntry {
-  username: string
-  avatarUrl?: string
+  username: string;
+  avatarUrl?: string;
 }
 
 interface ProgressEvent {
@@ -47,8 +51,15 @@ interface ProgressEvent {
   credentialId?: string;
 }
 
+interface ScrapedSource {
+  profileUsername: string;
+  followerCount: number;
+  profilePicUrl?: string;
+}
+
 export default function ExtractorPage() {
-  const [usernames, setUsernames] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [inputVal, setInputVal] = useState("");
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [followers, setFollowers] = useState<FollowerEntry[]>([]);
@@ -63,14 +74,70 @@ export default function ExtractorPage() {
   const [pendingCredentialId, setPendingCredentialId] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState("");
   const [submitting2FA, setSubmitting2FA] = useState(false);
+  const [scrapedStatus, setScrapedStatus] = useState<Record<string, boolean>>({});
+  const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
+  const [scrapedSourcesTotal, setScrapedSourcesTotal] = useState(0);
+  const [scrapedSourcesMore, setScrapedSourcesMore] = useState(false);
+  const [showAllSources, setShowAllSources] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    getScrapedSourcesAction().then((r) => {
+      setScrapedSources(r.sources);
+      setScrapedSourcesTotal(r.total);
+      setScrapedSourcesMore(r.hasMore);
+    });
+  }, []);
+
+  const validateTags = useCallback(async (newTags: string[]) => {
+    if (!newTags.length) return;
+    const result = await checkScrapedSourcesAction(newTags);
+    setScrapedStatus((prev) => ({ ...prev, ...result }));
+  }, []);
+
+  const addTag = useCallback(
+    (val: string) => {
+      const trimmed = val.trim().toLowerCase().replace(/[^a-z0-9._]/g, "");
+      if (!trimmed || tags.includes(trimmed)) return;
+      const next = [...tags, trimmed];
+      setTags(next);
+      setInputVal("");
+      validateTags(next);
+    },
+    [tags, validateTags],
+  );
+
+  const removeTag = useCallback((idx: number) => {
+    const removed = tags[idx];
+    setTags((prev) => prev.filter((_, i) => i !== idx));
+    setScrapedStatus((prev) => {
+      const next = { ...prev };
+      delete next[removed];
+      return next;
+    });
+  }, [tags]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === ",") {
+        e.preventDefault();
+        addTag(inputVal);
+      }
+      if (e.key === "Backspace" && !inputVal && tags.length > 0) {
+        removeTag(tags.length - 1);
+      }
+    },
+    [inputVal, tags, addTag, removeTag],
+  );
 
   const poll = useCallback(async (runId: string) => {
     const state = await pollExtractionAction(runId);
@@ -90,7 +157,7 @@ export default function ExtractorPage() {
       duplicateCount: last.duplicateCount,
       processedCount: last.processedCount,
       totalCount: last.totalCount,
-    }
+    };
 
     switch (last.type) {
       case "status":
@@ -135,6 +202,11 @@ export default function ExtractorPage() {
         if (counts.duplicateCount !== undefined) setDuplicateCount(counts.duplicateCount);
         if (counts.processedCount !== undefined) setProcessedCount(counts.processedCount);
         if (counts.totalCount !== undefined) setTotalCount(counts.totalCount);
+        getScrapedSourcesAction().then((r) => {
+          setScrapedSources(r.sources);
+          setScrapedSourcesTotal(r.total);
+          setScrapedSourcesMore(r.hasMore);
+        });
         if (pollRef.current) clearInterval(pollRef.current);
         break;
       case "error":
@@ -146,11 +218,7 @@ export default function ExtractorPage() {
   }, []);
 
   const startExtraction = useCallback(async () => {
-    const list = usernames
-      .split(/[\n,]+/)
-      .map((u) => u.trim())
-      .filter(Boolean);
-    if (!list.length) return;
+    if (!tags.length) return;
 
     setRunning(true);
     setError(null);
@@ -161,10 +229,10 @@ export default function ExtractorPage() {
     setInvalidCount(0);
     setDuplicateCount(0);
     setProcessedCount(0);
-    setTotalCount(list.length);
+    setTotalCount(tags.length);
     setStatus("Starting...");
 
-    const result = await startExtractionAction("", list);
+    const result = await startExtractionAction("", tags);
     if (result.error) {
       setError(result.error);
       setRunning(false);
@@ -174,7 +242,7 @@ export default function ExtractorPage() {
     runIdRef.current = runId;
 
     pollRef.current = setInterval(() => poll(runId), 1500);
-  }, [usernames, poll]);
+  }, [tags, poll]);
 
   const submit2FA = useCallback(async () => {
     if (!pendingCredentialId || !verificationCode.trim()) return;
@@ -201,6 +269,8 @@ export default function ExtractorPage() {
 
   const progress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
 
+  const displaySources = showAllSources ? scrapedSources : scrapedSources.slice(0, 10);
+
   return (
     <div className="space-y-6">
       <div>
@@ -213,15 +283,43 @@ export default function ExtractorPage() {
           <CardTitle>Target Profiles</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Textarea
-            placeholder="Enter usernames (one per line, or comma-separated)"
-            value={usernames}
-            onChange={(e) => setUsernames(e.target.value)}
-            rows={5}
-            disabled={running}
-          />
+          <div className="flex flex-wrap items-center gap-1.5 min-h-[42px] rounded-md border bg-transparent px-3 py-1.5 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring">
+            {tags.map((t, i) => {
+              const isScraped = scrapedStatus[t];
+              return (
+                <span
+                  key={t}
+                  data-scraped={!!isScraped}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 text-xs font-medium data-[scraped=true]:border-amber-300 data-[scraped=true]:bg-amber-50 dark:data-[scraped=true]:bg-amber-950/30"
+                >
+                  <span className={isScraped ? "text-amber-600 dark:text-amber-400" : ""}>{t}</span>
+                  {isScraped && (
+                    <span className="text-[10px] text-amber-500 font-normal">scraped</span>
+                  )}
+                  {!running && (
+                    <button
+                      type="button"
+                      onClick={() => removeTag(i)}
+                      className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+            <input
+              ref={inputRef}
+              value={inputVal}
+              onChange={(e) => setInputVal(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={tags.length === 0 ? "Type username and press Enter" : "Add more..."}
+              disabled={running}
+              className="min-w-[120px] flex-1 border-0 bg-transparent p-0 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
+            />
+          </div>
           <div className="flex gap-2">
-            <Button onClick={startExtraction} disabled={running || !usernames.trim()}>
+            <Button onClick={startExtraction} disabled={running || tags.length === 0}>
               {running ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Extracting...</>
               ) : (
@@ -335,13 +433,12 @@ export default function ExtractorPage() {
             <ScrollArea className="h-64 rounded border p-2">
               <div className="space-y-1">
                 {followers.map((f, i) => (
-                  <div key={`${f.username}-${i}`} className="flex items-center gap-2.5 text-sm px-2 py-1.5 rounded hover:bg-muted/50">
+                  <div
+                    key={`${f.username}-${i}`}
+                    className="flex items-center gap-2.5 text-sm px-2 py-1.5 rounded hover:bg-muted/50"
+                  >
                     {f.avatarUrl ? (
-                      <img
-                        src={f.avatarUrl}
-                        alt=""
-                        className="h-7 w-7 rounded-full object-cover shrink-0"
-                      />
+                      <img src={f.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" />
                     ) : (
                       <div className="h-7 w-7 rounded-full bg-muted shrink-0 flex items-center justify-center">
                         <Users className="h-3.5 w-3.5 text-muted-foreground" />
@@ -352,6 +449,54 @@ export default function ExtractorPage() {
                 ))}
               </div>
             </ScrollArea>
+          </CardContent>
+        </Card>
+      )}
+
+      {scrapedSources.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Previously Scraped Sources ({scrapedSourcesTotal})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1">
+              {displaySources.map((s) => (
+                <div
+                  key={s.profileUsername}
+                  className="flex items-center gap-3 px-2 py-2 rounded hover:bg-muted/50 transition-colors"
+                >
+                  {s.profilePicUrl ? (
+                    <img src={s.profilePicUrl} alt="" className="h-8 w-8 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="h-8 w-8 rounded-full bg-muted shrink-0 flex items-center justify-center">
+                      <Users className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  )}
+                  <span className="text-sm font-medium flex-1">@{s.profileUsername}</span>
+                  <Badge variant="secondary" className="gap-1 text-xs shrink-0">
+                    <Users className="h-3 w-3" />
+                    {s.followerCount}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            {scrapedSourcesMore && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 w-full"
+                onClick={() => setShowAllSources(!showAllSources)}
+              >
+                {showAllSources ? (
+                  <><ChevronUp className="mr-1 h-4 w-4" /> Show less</>
+                ) : (
+                  <><ChevronDown className="mr-1 h-4 w-4" /> Show all {scrapedSourcesTotal}</>
+                )}
+              </Button>
+            )}
           </CardContent>
         </Card>
       )}
