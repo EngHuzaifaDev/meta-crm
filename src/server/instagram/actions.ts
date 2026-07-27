@@ -217,7 +217,7 @@ export async function startExtractionAction(credentialId: string, usernames: str
   const cred = credentialId ? await getCredentialById(credentialId) : (await getActiveCredentials())[0];
   if (!cred) return { error: "No active credentials" };
 
-  const { createRun, pushEvent } = await import("./progress-store");
+  const { createRun, pushEvent, getAbortSignal } = await import("./progress-store");
   const { extractFollowersStream } = await import("./streaming-extractor");
 
   const runId = createRun();
@@ -233,6 +233,7 @@ export async function startExtractionAction(credentialId: string, usernames: str
       usernames,
     },
     (event) => pushEvent(runId, event),
+    getAbortSignal(runId) ?? undefined,
   );
 
   return { runId };
@@ -255,8 +256,8 @@ export async function pollTestLoginAction(runId: string) {
 }
 
 export async function stopExtractionAction(runId: string) {
-  const { markStopped } = await import("./progress-store");
-  markStopped(runId);
+  const { abortRun } = await import("./progress-store");
+  abortRun(runId);
   return { success: true };
 }
 

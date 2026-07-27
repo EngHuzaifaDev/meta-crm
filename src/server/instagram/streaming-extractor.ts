@@ -61,7 +61,13 @@ export interface StreamOptions {
   usernames: string[];
 }
 
-export async function extractFollowersStream(options: StreamOptions, onProgress: ProgressCallback): Promise<void> {
+export async function extractFollowersStream(
+  options: StreamOptions,
+  onProgress: ProgressCallback,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  if (abortSignal?.aborted) return;
+
   const proxyUrl = process.env.PROXY_URL || undefined;
   const driver = await createDriver(proxyUrl);
 
@@ -173,6 +179,11 @@ export async function extractFollowersStream(options: StreamOptions, onProgress:
     const engine = new ScrapingEngine(driver, ctx);
 
     for (let i = 0; i < options.usernames.length; i++) {
+      if (abortSignal?.aborted) {
+        await onProgress({ type: "status", message: "Stopping..." });
+        break;
+      }
+
       const targetUsername = options.usernames[i];
       processedCount = i + 1;
 
@@ -203,6 +214,8 @@ export async function extractFollowersStream(options: StreamOptions, onProgress:
         const existingFollowers = await getExistingFollowerUsernames(targetUsername);
 
         const result = await extractFollowersGraphQLViaDriver(driver, targetUsername, async (gqlEvent) => {
+          if (abortSignal?.aborted) return;
+
           if (gqlEvent.page === 1 && gqlEvent.estimatedTotal > 0) {
             totalEstimatedFollowers += gqlEvent.estimatedTotal;
           }
@@ -243,7 +256,7 @@ export async function extractFollowersStream(options: StreamOptions, onProgress:
               totalCount,
             });
           }
-        });
+        }, abortSignal);
 
         if (result.isPrivate) {
           await markProfilePrivate(targetUsername);
@@ -273,6 +286,7 @@ export async function extractFollowersStream(options: StreamOptions, onProgress:
           totalCount,
         });
       } catch (err: any) {
+        if (err.message === "ABORTED") throw err;
         const msg = err.message || "";
         if (msg.includes("PROFILE_NOT_FOUND")) {
           await markProfileInvalid(targetUsername);
@@ -342,12 +356,21 @@ export async function extractFollowersStream(options: StreamOptions, onProgress:
       totalCount,
     });
   } catch (error: any) {
-    await onProgress({
-      type: "error",
-      error: error.message || "Unknown error during extraction",
-      processedCount,
-      totalCount,
-    });
+    if (error.message === "ABORTED") {
+      await onProgress({
+        type: "status",
+        message: "Extraction stopped by user",
+        processedCount,
+        totalCount,
+      });
+    } else {
+      await onProgress({
+        type: "error",
+        error: error.message || "Unknown error during extraction",
+        processedCount,
+        totalCount,
+      });
+    }
   } finally {
     await driver.quit();
   }

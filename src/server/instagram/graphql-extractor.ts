@@ -6,16 +6,21 @@ const PAGE_SIZE = 50;
 const REQUEST_DELAY_MS = 5000;
 const MAX_REQUESTS_PER_SESSION = 200;
 
-async function browserSleep(driver: WebDriver, ms: number): Promise<void> {
-  await driver.executeAsyncScript(`
+async function browserSleep(driver: WebDriver, ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return;
+  await driver.executeAsyncScript(
+    `
     const ms = arguments[0];
     const done = arguments[1];
     setTimeout(done, ms);
-  `, ms);
+  `,
+    ms,
+  );
 }
 
-async function igFetchViaDriver<T>(driver: WebDriver, url: string, retries = 3): Promise<T> {
+async function igFetchViaDriver<T>(driver: WebDriver, url: string, signal?: AbortSignal, retries = 3): Promise<T> {
   for (let attempt = 0; attempt < retries; attempt++) {
+    if (signal?.aborted) throw new Error("ABORTED");
     const result: any = await driver.executeAsyncScript(
       `
       const url = arguments[0];
@@ -34,7 +39,8 @@ async function igFetchViaDriver<T>(driver: WebDriver, url: string, retries = 3):
     if (result._error) throw new Error(result._error);
     if (result.status === 429) {
       const wait = Math.min(60000 * 2 ** attempt, 300000);
-      await browserSleep(driver, wait);
+      await browserSleep(driver, wait, signal);
+      if (signal?.aborted) throw new Error("ABORTED");
       continue;
     }
     if (!result.ok) {
@@ -51,9 +57,14 @@ export interface ProfileInfo {
   profilePicUrl: string;
 }
 
-export async function resolveProfileInfoViaDriver(driver: WebDriver, username: string): Promise<ProfileInfo> {
+export async function resolveProfileInfoViaDriver(
+  driver: WebDriver,
+  username: string,
+  signal?: AbortSignal,
+): Promise<ProfileInfo> {
+  if (signal?.aborted) throw new Error("ABORTED");
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
-  const data = await igFetchViaDriver<{ data: { user: any } }>(driver, url);
+  const data = await igFetchViaDriver<{ data: { user: any } }>(driver, url, signal);
   const user = data.data?.user;
   if (!user) throw new Error("PROFILE_NOT_FOUND");
   return {
@@ -73,15 +84,17 @@ export interface GraphQLPageResult {
 export async function fetchFollowersPageViaDriver(
   driver: WebDriver,
   userId: string,
+  signal?: AbortSignal,
   cursor?: string,
 ): Promise<GraphQLPageResult> {
+  if (signal?.aborted) throw new Error("ABORTED");
   const vars: Record<string, any> = { id: userId, first: PAGE_SIZE };
   if (cursor) vars.after = cursor;
 
   const url = `https://www.instagram.com/graphql/query/?query_hash=${QUERY_HASH}&variables=${encodeURIComponent(JSON.stringify(vars))}`;
   const data = await igFetchViaDriver<{
     data: { user: { edge_followed_by: any } };
-  }>(driver, url);
+  }>(driver, url, signal);
 
   const edge = data.data?.user?.edge_followed_by;
   if (!edge) throw new Error("Unexpected GraphQL response structure — missing edge_followed_by");
@@ -126,8 +139,11 @@ export async function extractFollowersGraphQLViaDriver(
   driver: WebDriver,
   targetUsername: string,
   onProgress: GraphQLProgressCallback,
+  signal?: AbortSignal,
 ): Promise<GraphQLExtractionResult> {
-  const profile = await resolveProfileInfoViaDriver(driver, targetUsername);
+  if (signal?.aborted) throw new Error("ABORTED");
+
+  const profile = await resolveProfileInfoViaDriver(driver, targetUsername, signal);
 
   if (profile.isPrivate) {
     return {
@@ -150,7 +166,9 @@ export async function extractFollowersGraphQLViaDriver(
   const avatarUrls = new Map<string, string>();
 
   while (requestCount < MAX_REQUESTS_PER_SESSION) {
-    const result = await fetchFollowersPageViaDriver(driver, userId, cursor);
+    if (signal?.aborted) throw new Error("ABORTED");
+
+    const result = await fetchFollowersPageViaDriver(driver, userId, signal, cursor);
     requestCount++;
 
     if (page === 0) {
@@ -181,7 +199,7 @@ export async function extractFollowersGraphQLViaDriver(
     cursor = result.endCursor ?? undefined;
     page++;
     estimatedTotal = result.estimatedTotal;
-    await browserSleep(driver, REQUEST_DELAY_MS);
+    await browserSleep(driver, REQUEST_DELAY_MS, signal);
   }
 
   return {
