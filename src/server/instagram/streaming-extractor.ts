@@ -219,9 +219,35 @@ export async function extractFollowersStream(
       const navProfilePic = navResult.extractProfilePic as string | undefined
 
       const followersDef = await engine.loadDefinition(FOLLOWERS_YAML);
-      const followersResult = await engine.execute(followersDef);
+      let rawFollowers: Array<{ username: string; avatarUrl?: string }> = [];
 
-      const rawFollowers = (followersResult.finalExtract as Array<{ username: string; avatarUrl?: string }>) || [];
+      try {
+        const followersResult = await engine.execute(followersDef);
+        rawFollowers = (followersResult.finalExtract as Array<{ username: string; avatarUrl?: string }>) || [];
+      } catch (err: any) {
+        const isPrivate = await driver.executeScript(
+          "return document.body.innerText.toLowerCase().includes('this profile is private')",
+        );
+        if (isPrivate) {
+          await markProfilePrivate(targetUsername);
+          await onProgress({
+            type: "private",
+            profileUsername: targetUsername,
+            message: `@${targetUsername} is private — skipping`,
+            processedCount,
+            totalCount,
+          });
+          continue;
+        }
+        await onProgress({
+          type: "status",
+          profileUsername: targetUsername,
+          message: `@${targetUsername}: dialog error — ${err.message || "timeout"} — skipping`,
+          processedCount,
+          totalCount,
+        });
+        continue;
+      }
 
       const existingFollowers = await getExistingFollowerUsernames(targetUsername);
       let profileCount = 0;
