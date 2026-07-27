@@ -16,6 +16,16 @@ actions:
         script: "return { error: 'PROFILE_NOT_FOUND', username: arguments[0] }"
         value: "{profile.username}"
 
+  - id: checkPrivateProfile
+    action: ifExists
+    selector: "//span[contains(text(), 'This profile is private')]"
+    timeout: 5000
+    then:
+      - id: profileIsPrivate
+        action: javascript
+        script: "return { error: 'PROFILE_IS_PRIVATE', username: arguments[0] }"
+        value: "{profile.username}"
+
   - id: waitForProfilePage
     action: wait
     selector: "header section"

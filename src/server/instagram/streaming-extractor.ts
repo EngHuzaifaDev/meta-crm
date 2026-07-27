@@ -2,7 +2,7 @@ import { createDriver } from "./driver";
 import { loginToInstagram } from "./login";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
-import { upsertFollower, updateTargetProfileScraped, getExistingFollowerUsernames, isProfileAlreadyScraped } from "@/lib/db/utils/instagram";
+import { upsertFollower, updateTargetProfileScraped, getExistingFollowerUsernames, isProfileAlreadyScraped, markProfilePrivate } from "@/lib/db/utils/instagram";
 import { createChallenge } from "./challenges";
 import path from "node:path";
 
@@ -14,7 +14,7 @@ const REELS_YAML = path.join(ACTIONS_DIR, "reels.yaml");
 const REEL_SCROLL_INTERVAL = 5;
 
 export interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "done" | "error" | "2fa_required";
+  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -189,6 +189,19 @@ export async function extractFollowersStream(
           profileUsername: targetUsername,
           message: `@${targetUsername} not found`,
           invalidCount,
+          processedCount,
+          totalCount,
+        });
+        continue;
+      }
+
+      const privateError = navResult.checkPrivateProfile as { error?: string } | undefined;
+      if (privateError?.error === "PROFILE_IS_PRIVATE") {
+        await markProfilePrivate(targetUsername);
+        await onProgress({
+          type: "private",
+          profileUsername: targetUsername,
+          message: `@${targetUsername} is private — skipping`,
           processedCount,
           totalCount,
         });

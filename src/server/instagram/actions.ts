@@ -262,7 +262,8 @@ export async function stopExtractionAction(runId: string) {
 
 export async function checkScrapedSourcesAction(usernames: string[]) {
   const { checkScrapedStatusBatch } = await import("@/lib/db/utils/instagram");
-  return checkScrapedStatusBatch(usernames);
+  const statuses = await checkScrapedStatusBatch(usernames);
+  return statuses as Record<string, "scraped" | "private" | null>;
 }
 
 export async function getScrapedSourcesAction() {

@@ -27,6 +27,7 @@ export interface InstagramTargetProfile {
   lastScrapedAt?: Date;
   followerCount?: number;
   profilePicUrl?: string;
+  isPrivate?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -158,23 +159,33 @@ export async function getExistingFollowerUsernames(sourceProfileUsername: string
 }
 
 export async function isProfileAlreadyScraped(profileUsername: string): Promise<boolean> {
-  const follower = await followersCol.findOne(
-    { sourceProfileUsername: profileUsername },
-    { projection: { _id: 1 } },
-  )
-  return !!follower
+  const [follower, privateProfile] = await Promise.all([
+    followersCol.findOne({ sourceProfileUsername: profileUsername }, { projection: { _id: 1 } }),
+    targetProfilesCol.findOne({ profileUsername, isPrivate: true }, { projection: { _id: 1 } }),
+  ])
+  return !!follower || !!privateProfile
 }
 
-export async function checkScrapedStatusBatch(usernames: string[]): Promise<Record<string, boolean>> {
-  const docs = await followersCol
-    .aggregate([
-      { $match: { sourceProfileUsername: { $in: usernames } } },
-      { $group: { _id: '$sourceProfileUsername' } },
-    ])
-    .toArray()
-  const scraped = new Set(docs.map((d) => String(d._id)))
-  const result: Record<string, boolean> = {}
-  for (const u of usernames) result[u] = scraped.has(u)
+export async function checkScrapedStatusBatch(usernames: string[]): Promise<Record<string, "scraped" | "private" | null>> {
+  const [followers, privates] = await Promise.all([
+    followersCol
+      .aggregate([
+        { $match: { sourceProfileUsername: { $in: usernames } } },
+        { $group: { _id: '$sourceProfileUsername' } },
+      ])
+      .toArray(),
+    targetProfilesCol
+      .find({ profileUsername: { $in: usernames }, isPrivate: true }, { projection: { profileUsername: 1 } })
+      .toArray(),
+  ])
+  const scraped = new Set(followers.map((d) => String(d._id)))
+  const privateSet = new Set(privates.map((d) => d.profileUsername))
+  const result: Record<string, "scraped" | "private" | null> = {}
+  for (const u of usernames) {
+    if (scraped.has(u)) result[u] = "scraped"
+    else if (privateSet.has(u)) result[u] = "private"
+    else result[u] = null
+  }
   return result
 }
 
@@ -185,8 +196,16 @@ export async function countScrapedSources(): Promise<number> {
   return docs[0]?.total ?? 0
 }
 
+export async function markProfilePrivate(profileUsername: string): Promise<void> {
+  await targetProfilesCol.updateOne(
+    { profileUsername },
+    { $set: { isPrivate: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true },
+  )
+}
+
 export async function getScrapedSources(limit = 10): Promise<
-  Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string }>
+  Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string; isPrivate?: boolean }>
 > {
   const pipeline = [
     { $group: { _id: '$sourceProfileUsername', followerCount: { $sum: 1 } } },
@@ -206,6 +225,7 @@ export async function getScrapedSources(limit = 10): Promise<
         profileUsername: '$_id',
         followerCount: 1,
         profilePicUrl: { $ifNull: ['$profile.profilePicUrl', null] },
+        isPrivate: { $ifNull: ['$profile.isPrivate', false] },
       },
     },
   ]

@@ -10,6 +10,7 @@ import {
   ChevronUp,
   Download,
   Loader2,
+  Lock,
   ShieldAlert,
   Upload,
   Users,
@@ -40,7 +41,7 @@ interface FollowerEntry {
 }
 
 interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "done" | "error" | "2fa_required";
+  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -58,6 +59,7 @@ interface ScrapedSource {
   profileUsername: string;
   followerCount: number;
   profilePicUrl?: string;
+  isPrivate?: boolean;
 }
 
 export default function ExtractorPage() {
@@ -68,6 +70,7 @@ export default function ExtractorPage() {
   const [followers, setFollowers] = useState<FollowerEntry[]>([]);
   const [totalFollowers, setTotalFollowers] = useState(0);
   const [invalidCount, setInvalidCount] = useState(0);
+  const [privateCount, setPrivateCount] = useState(0);
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -77,7 +80,7 @@ export default function ExtractorPage() {
   const [pendingCredentialId, setPendingCredentialId] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState("");
   const [submitting2FA, setSubmitting2FA] = useState(false);
-  const [scrapedStatus, setScrapedStatus] = useState<Record<string, boolean>>({});
+  const [scrapedStatus, setScrapedStatus] = useState<Record<string, "scraped" | "private" | null>>({});
   const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
   const [scrapedSourcesTotal, setScrapedSourcesTotal] = useState(0);
   const [scrapedSourcesMore, setScrapedSourcesMore] = useState(false);
@@ -258,6 +261,12 @@ export default function ExtractorPage() {
         setProcessedCount(counts.processedCount ?? 0);
         setTotalCount(counts.totalCount ?? 0);
         break;
+      case "private":
+        setPrivateCount((prev) => prev + 1);
+        setStatus(last.message || null);
+        setProcessedCount(counts.processedCount ?? 0);
+        setTotalCount(counts.totalCount ?? 0);
+        break;
       case "2fa_required":
         setShow2FA(true);
         setPendingCredentialId(last.credentialId || null);
@@ -291,7 +300,8 @@ export default function ExtractorPage() {
     if (!tags.length) return;
 
     const toScrape = tags.filter((t) => !scrapedStatus[t]);
-    const discarded = tags.length - toScrape.length;
+    const discarded = tags.filter((t) => scrapedStatus[t] === "scraped").length;
+    const privateDiscarded = tags.filter((t) => scrapedStatus[t] === "private").length;
 
     if (!toScrape.length) {
       setStatus("All profiles already scraped — nothing to extract");
@@ -308,7 +318,10 @@ export default function ExtractorPage() {
     setDuplicateCount(0);
     setProcessedCount(0);
     setTotalCount(toScrape.length);
-    setStatus(discarded > 0 ? `Starting — ${discarded} already scraped, skipped` : "Starting...");
+    const parts: string[] = [];
+    if (discarded > 0) parts.push(`${discarded} already scraped`);
+    if (privateDiscarded > 0) parts.push(`${privateDiscarded} private`);
+    setStatus(parts.length > 0 ? `Starting — ${parts.join(", ")} — skipped` : "Starting...");
 
     const result = await startExtractionAction("", toScrape);
     if (result.error) {
@@ -363,17 +376,18 @@ export default function ExtractorPage() {
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center gap-1.5 min-h-[42px] rounded-md border bg-transparent px-3 py-1.5 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring">
             {tags.map((t, i) => {
-              const isScraped = scrapedStatus[t];
+              const status = scrapedStatus[t];
+              const isScraped = status === "scraped";
+              const isPrivate = status === "private";
               return (
                 <span
                   key={t}
-                  data-scraped={!!isScraped}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 text-xs font-medium data-[scraped=true]:border-amber-300 data-[scraped=true]:bg-amber-50 dark:data-[scraped=true]:bg-amber-950/30"
+                  data-status={status ?? ""}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 text-xs font-medium data-[status=scraped]:border-amber-300 data-[status=scraped]:bg-amber-50 dark:data-[status=scraped]:bg-amber-950/30 data-[status=private]:border-violet-300 data-[status=private]:bg-violet-50 dark:data-[status=private]:bg-violet-950/30"
                 >
-                  <span className={isScraped ? "text-amber-600 dark:text-amber-400" : ""}>{t}</span>
-                  {isScraped && (
-                    <span className="text-[10px] text-amber-500 font-normal">scraped</span>
-                  )}
+                  <span className={isScraped ? "text-amber-600 dark:text-amber-400" : isPrivate ? "text-violet-600 dark:text-violet-400" : ""}>{t}</span>
+                  {isScraped && <span className="text-[10px] text-amber-500 font-normal">scraped</span>}
+                  {isPrivate && <Lock className="h-3 w-3 text-violet-500" />}
                   {!running && (
                     <button
                       type="button"
@@ -512,6 +526,10 @@ export default function ExtractorPage() {
                 <Ban className="h-3.5 w-3.5" />
                 {invalidCount} invalid
               </Badge>
+              <Badge variant="outline" className="gap-1 text-sm text-violet-600 border-violet-300 dark:text-violet-400 dark:border-violet-800">
+                <Lock className="h-3.5 w-3.5" />
+                {privateCount} private
+              </Badge>
               <Badge variant="outline" className="gap-1 text-sm text-muted-foreground">
                 <AlertCircle className="h-3.5 w-3.5" />
                 {duplicateCount} duplicates ignored
@@ -579,16 +597,29 @@ export default function ExtractorPage() {
                       <img src={s.profilePicUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
                     ) : (
                       <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center">
-                        <Users className="h-5 w-5 text-muted-foreground" />
+                        {s.isPrivate ? (
+                          <Lock className="h-5 w-5 text-violet-500" />
+                        ) : (
+                          <Users className="h-5 w-5 text-muted-foreground" />
+                        )}
                       </div>
                     )}
-                    <div className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground shadow-xs">
-                      {s.followerCount}
-                    </div>
+                    {s.isPrivate ? (
+                      <div className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-semibold text-white shadow-xs">
+                        <Lock className="h-3 w-3" />
+                      </div>
+                    ) : (
+                      <div className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground shadow-xs">
+                        {s.followerCount}
+                      </div>
+                    )}
                   </div>
                   <span className="text-xs font-medium text-center truncate max-w-full">
                     @{s.profileUsername}
                   </span>
+                  {s.isPrivate && (
+                    <span className="text-[10px] text-violet-500 font-medium">Private</span>
+                  )}
                 </div>
               ))}
             </div>
