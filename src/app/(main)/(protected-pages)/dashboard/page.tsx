@@ -27,6 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   checkScrapedSourcesAction,
+  getProfileFollowersAction,
   getScrapedSourcesAction,
   pollExtractionAction,
   resolve2FAAction,
@@ -231,6 +232,19 @@ export default function ExtractorPage() {
     a.click();
     URL.revokeObjectURL(url);
   }, [tags]);
+
+  const downloadProfileCSV = useCallback(async (profileUsername: string) => {
+    const followers = await getProfileFollowersAction(profileUsername);
+    if (!followers.length) return;
+    const csv = `username\n${followers.join("\n")}`;
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${profileUsername}-followers.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
 
   const poll = useCallback(async (runId: string) => {
     const state = await pollExtractionAction(runId);
@@ -682,7 +696,19 @@ export default function ExtractorPage() {
                     )}
                   </div>
                   <span className="max-w-full truncate text-center font-medium text-xs">@{s.profileUsername}</span>
-                  {s.isPrivate && <span className="font-medium text-[10px] text-violet-500">Private</span>}
+                  {s.isPrivate ? (
+                    <span className="font-medium text-[10px] text-violet-500">Private</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => downloadProfileCSV(s.profileUsername)}
+                      className="mt-1 inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      title="Download followers CSV"
+                    >
+                      <Download className="h-3 w-3" />
+                      CSV
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

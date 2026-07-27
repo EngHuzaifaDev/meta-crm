@@ -271,3 +271,9 @@ export async function getScrapedSourcesAction() {
   const [sources, total] = await Promise.all([getScrapedSources(10), countScrapedSources()]);
   return { sources, hasMore: total > 10, total };
 }
+
+export async function getProfileFollowersAction(profileUsername: string): Promise<string[]> {
+  const { getFollowersForProfile } = await import("@/lib/db/utils/instagram");
+  const records = await getFollowersForProfile(profileUsername);
+  return records.map((r) => r.followerUsername);
+}
