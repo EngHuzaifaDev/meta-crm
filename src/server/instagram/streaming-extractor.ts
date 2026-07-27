@@ -62,7 +62,8 @@ export interface StreamOptions {
 }
 
 export async function extractFollowersStream(options: StreamOptions, onProgress: ProgressCallback): Promise<void> {
-  const driver = await createDriver();
+  const proxyUrl = process.env.PROXY_URL || undefined;
+  const driver = await createDriver(proxyUrl);
 
   let totalFollowers = 0;
   let totalEstimatedFollowers = 0;

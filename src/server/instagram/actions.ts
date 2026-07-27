@@ -99,7 +99,7 @@ async function runTestLoginInBackground(
   const { createChallenge } = await import("./challenges");
   const { default: { By, until } } = await import("selenium-webdriver");
 
-  const driver = await createDriver();
+  const driver = await createDriver(process.env.PROXY_URL || undefined);
   try {
     pushEvent(runId, { type: "status", message: "Logging in..." });
 
@@ -179,7 +179,7 @@ export async function completeLoginAction(credentialId: string, code: string) {
   const { createDriver } = await import("./driver");
   const { loginToInstagram } = await import("./login");
 
-  const driver = await createDriver();
+  const driver = await createDriver(process.env.PROXY_URL || undefined);
   try {
     const result = await loginToInstagram(driver, {
       username: cred.instagramUsername,

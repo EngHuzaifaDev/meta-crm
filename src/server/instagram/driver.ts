@@ -3,21 +3,25 @@ import { Builder, WebDriver } from 'selenium-webdriver';
 const SELENIUM_GRID_URL =
   process.env.SELENIUM_GRID_URL || 'http://selenium-hub:4444';
 
-export async function createDriver(): Promise<WebDriver> {
+export async function createDriver(proxy?: string): Promise<WebDriver> {
+  const args = [
+    '--disable-blink-features=AutomationControlled',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--window-size=1920,1080',
+    '--disable-gpu',
+    '--lang=en-US',
+  ];
+
+  if (proxy) {
+    args.push(`--proxy-server=${proxy}`);
+  }
+
   const driver = await new Builder()
     .usingServer(SELENIUM_GRID_URL)
     .withCapabilities({
       browserName: 'chrome',
-      'goog:chromeOptions': {
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--window-size=1920,1080',
-          '--disable-gpu',
-          '--lang=en-US',
-        ],
-      },
+      'goog:chromeOptions': { args },
     })
     .build();
 
