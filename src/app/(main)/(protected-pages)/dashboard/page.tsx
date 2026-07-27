@@ -8,8 +8,10 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronUp,
+  Download,
   Loader2,
   ShieldAlert,
+  Upload,
   Users,
   X,
 } from "lucide-react";
@@ -21,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import {
   startExtractionAction,
@@ -82,6 +85,7 @@ export default function ExtractorPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -138,6 +142,72 @@ export default function ExtractorPage() {
     },
     [inputVal, tags, addTag, removeTag],
   );
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      e.preventDefault();
+      const text = e.clipboardData.getData("text");
+      const parts = text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+      if (!parts.length) return;
+      const next = [...tags];
+      let added = 0;
+      for (const p of parts) {
+        const cleaned = p.toLowerCase().replace(/[^a-z0-9._]/g, "");
+        if (cleaned && !next.includes(cleaned)) {
+          next.push(cleaned);
+          added++;
+        }
+      }
+      if (added > 0) {
+        setTags(next);
+        setInputVal("");
+        validateTags(next);
+      }
+    },
+    [tags, validateTags],
+  );
+
+  const handleFileUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const text = ev.target?.result as string;
+        if (!text) return;
+        const lines = text.split(/[\n\r]+/).filter(Boolean);
+        const keys = lines.flatMap((line) => line.split(",").map((s) => s.trim().replace(/^["']|["']$/g, ""))).filter(Boolean);
+        const next = [...tags];
+        let added = 0;
+        for (const k of keys) {
+          const cleaned = k.toLowerCase().replace(/[^a-z0-9._]/g, "");
+          if (cleaned && !next.includes(cleaned)) {
+            next.push(cleaned);
+            added++;
+          }
+        }
+        if (added > 0) {
+          setTags(next);
+          validateTags(next);
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    },
+    [tags, validateTags],
+  );
+
+  const downloadCSV = useCallback(() => {
+    if (!tags.length) return;
+    const csv = "username\n" + tags.map((t) => t).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "target-profiles.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [tags]);
 
   const poll = useCallback(async (runId: string) => {
     const state = await pollExtractionAction(runId);
@@ -220,6 +290,14 @@ export default function ExtractorPage() {
   const startExtraction = useCallback(async () => {
     if (!tags.length) return;
 
+    const toScrape = tags.filter((t) => !scrapedStatus[t]);
+    const discarded = tags.length - toScrape.length;
+
+    if (!toScrape.length) {
+      setStatus("All profiles already scraped — nothing to extract");
+      return;
+    }
+
     setRunning(true);
     setError(null);
     setDone(false);
@@ -229,10 +307,10 @@ export default function ExtractorPage() {
     setInvalidCount(0);
     setDuplicateCount(0);
     setProcessedCount(0);
-    setTotalCount(tags.length);
-    setStatus("Starting...");
+    setTotalCount(toScrape.length);
+    setStatus(discarded > 0 ? `Starting — ${discarded} already scraped, skipped` : "Starting...");
 
-    const result = await startExtractionAction("", tags);
+    const result = await startExtractionAction("", toScrape);
     if (result.error) {
       setError(result.error);
       setRunning(false);
@@ -242,7 +320,7 @@ export default function ExtractorPage() {
     runIdRef.current = runId;
 
     pollRef.current = setInterval(() => poll(runId), 1500);
-  }, [tags, poll]);
+  }, [tags, scrapedStatus, poll]);
 
   const submit2FA = useCallback(async () => {
     if (!pendingCredentialId || !verificationCode.trim()) return;
@@ -313,12 +391,13 @@ export default function ExtractorPage() {
               value={inputVal}
               onChange={(e) => setInputVal(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={tags.length === 0 ? "Type username and press Enter" : "Add more..."}
+              onPaste={handlePaste}
+              placeholder={tags.length === 0 ? "Type or paste usernames (comma-separated)" : "Add more..."}
               disabled={running}
               className="min-w-[120px] flex-1 border-0 bg-transparent p-0 text-sm outline-none placeholder:text-muted-foreground disabled:opacity-50"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button onClick={startExtraction} disabled={running || tags.length === 0}>
               {running ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Extracting...</>
@@ -329,6 +408,33 @@ export default function ExtractorPage() {
             {running && (
               <Button variant="destructive" onClick={stopExtraction}>Stop</Button>
             )}
+            <div className="ml-auto flex gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={running}>
+                    <Upload className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Import CSV</TooltipContent>
+              </Tooltip>
+              {tags.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="sm" onClick={downloadCSV}>
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Download CSV</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -462,24 +568,27 @@ export default function ExtractorPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
               {displaySources.map((s) => (
                 <div
                   key={s.profileUsername}
-                  className="flex items-center gap-3 px-2 py-2 rounded hover:bg-muted/50 transition-colors"
+                  className="flex flex-col items-center gap-1.5 p-3 rounded-lg hover:bg-muted/50 transition-colors"
                 >
-                  {s.profilePicUrl ? (
-                    <img src={s.profilePicUrl} alt="" className="h-8 w-8 rounded-full object-cover shrink-0" />
-                  ) : (
-                    <div className="h-8 w-8 rounded-full bg-muted shrink-0 flex items-center justify-center">
-                      <Users className="h-4 w-4 text-muted-foreground" />
+                  <div className="relative">
+                    {s.profilePicUrl ? (
+                      <img src={s.profilePicUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
+                    ) : (
+                      <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center">
+                        <Users className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground shadow-xs">
+                      {s.followerCount}
                     </div>
-                  )}
-                  <span className="text-sm font-medium flex-1">@{s.profileUsername}</span>
-                  <Badge variant="secondary" className="gap-1 text-xs shrink-0">
-                    <Users className="h-3 w-3" />
-                    {s.followerCount}
-                  </Badge>
+                  </div>
+                  <span className="text-xs font-medium text-center truncate max-w-full">
+                    @{s.profileUsername}
+                  </span>
                 </div>
               ))}
             </div>
@@ -487,7 +596,7 @@ export default function ExtractorPage() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="mt-2 w-full"
+                className="mt-3 w-full"
                 onClick={() => setShowAllSources(!showAllSources)}
               >
                 {showAllSources ? (
