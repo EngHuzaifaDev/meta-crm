@@ -236,16 +236,3 @@ export async function updateTargetProfileScraped(profileUsername: string, follow
     { upsert: true },
   );
 }
-
-export async function updateTargetProfileScraped(profileUsername: string, followerCount: number): Promise<void> {
-  await targetProfilesCol.updateOne(
-    { profileUsername },
-    {
-      $set: {
-        lastScrapedAt: new Date(),
-        followerCount,
-        updatedAt: new Date(),
-      },
-    },
-  );
-}
