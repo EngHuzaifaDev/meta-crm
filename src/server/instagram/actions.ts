@@ -130,21 +130,24 @@ async function runTestLoginInBackground(
       const focused = await driver.executeScript("return document.activeElement");
       if (focused) {
         await driver.executeScript(nativeSet, focused, code);
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 1000));
 
-        const spans = await driver.findElements(By.css("span"));
-        for (const s of spans) {
-          const text = await s.getText();
-          if (text.trim() === "Log in") {
-            let parent: any = s;
-            while (true) {
-              const overlay = await parent.findElements(By.css('[data-visualcompletion="ignore"]'));
-              if (overlay.length > 0) { await parent.click(); break; }
-              try { parent = await parent.findElement(By.xpath("..")); } catch { break; }
+        await driver.executeScript(`
+          const spans = document.querySelectorAll('span');
+          for (const s of spans) {
+            const txt = s.textContent.trim().toLowerCase();
+            if (txt === 'log in' || txt === 'continue' || txt === 'confirm' || txt === 'verify' || txt === 'next') {
+              let el = s;
+              while (el.parentElement && el.parentElement.tagName !== 'BODY') {
+                if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
+                  el.parentElement.click();
+                  return;
+                }
+                el = el.parentElement;
+              }
             }
-            break;
           }
-        }
+        `);
 
         await driver.wait(until.elementLocated(By.css("section main")), 20000);
         pushEvent(runId, { type: "done", message: "Login successful — session saved" });

@@ -27,7 +27,8 @@ actions:
     script: |
       const spans = document.querySelectorAll('span');
       for (const s of spans) {
-        if (s.textContent.trim() === 'Log in') {
+        const txt = s.textContent.trim().toLowerCase();
+        if (txt === 'log in' || txt === 'continue' || txt === 'confirm' || txt === 'verify' || txt === 'next') {
           let el = s;
           while (el.parentElement && el.parentElement.tagName !== 'BODY') {
             if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
@@ -65,7 +66,8 @@ actions:
     script: |
       const spans = document.querySelectorAll('span');
       for (const s of spans) {
-        if (s.textContent.trim() === 'Log in') {
+        const txt = s.textContent.trim().toLowerCase();
+        if (txt === 'log in' || txt === 'continue' || txt === 'confirm' || txt === 'verify' || txt === 'next') {
           let el = s;
           while (el.parentElement && el.parentElement.tagName !== 'BODY') {
             if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
