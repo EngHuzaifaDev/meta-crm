@@ -83,17 +83,52 @@ export async function extractFollowersStream(
 
       try {
         const code = await createChallenge(options.credentialId);
-        options.credentials.verificationCode = code;
 
-        const retryResult = await loginToInstagram(driver, {
-          username: options.credentials.username,
-          password: options.credentials.password,
-          verificationCode: code,
-          credentialId: options.credentialId,
-        });
+        await onProgress({ type: "status", message: "Submitting verification code..." });
 
-        if (!retryResult.success) {
-          await onProgress({ type: "error", error: `2FA login failed: ${retryResult.error}` });
+        const nativeSet = `const el = arguments[0]; const val = arguments[1];
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+          if (setter) { setter.call(el, val);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true })); }`;
+
+        const focused = await driver.executeScript("return document.activeElement");
+        if (focused) {
+          await driver.executeScript(nativeSet, focused, code);
+          await new Promise((r) => setTimeout(r, 1000));
+
+          await driver.executeScript(`
+            const spans = document.querySelectorAll('span');
+            for (const s of spans) {
+              const txt = s.textContent.trim().toLowerCase();
+              if (txt === 'log in' || txt === 'continue' || txt === 'confirm' || txt === 'verify' || txt === 'next') {
+                let el = s;
+                while (el.parentElement && el.parentElement.tagName !== 'BODY') {
+                  if (el.parentElement.querySelector('[data-visualcompletion="ignore"]')) {
+                    el.parentElement.click();
+                    return;
+                  }
+                  el = el.parentElement;
+                }
+              }
+            }
+          `);
+
+          await driver.wait(() => driver.executeScript("return !!document.querySelector('section main')"), 20000);
+
+          if (options.credentialId) {
+            const { extractCookies } = await import("./driver");
+            const { saveSession } = await import("@/lib/db/utils/instagram");
+            const cookies = await extractCookies(driver);
+            await saveSession(options.credentialId, {
+              cookies,
+              userAgent: "Chrome",
+              savedAt: new Date(),
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            });
+          }
+        } else {
+          await onProgress({ type: "error", error: "No focused element for 2FA code" });
           return;
         }
       } catch {
