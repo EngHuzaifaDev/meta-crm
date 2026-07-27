@@ -25,14 +25,13 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-
 import {
-  startExtractionAction,
-  pollExtractionAction,
-  stopExtractionAction,
-  resolve2FAAction,
   checkScrapedSourcesAction,
   getScrapedSourcesAction,
+  pollExtractionAction,
+  resolve2FAAction,
+  startExtractionAction,
+  stopExtractionAction,
 } from "@/server/instagram/actions";
 
 interface FollowerEntry {
@@ -54,6 +53,10 @@ interface ProgressEvent {
   totalCount?: number;
   error?: string;
   credentialId?: string;
+  page?: number;
+  totalPages?: number;
+  estimatedTotal?: number;
+  totalEstimatedFollowers?: number;
 }
 
 interface ScrapedSource {
@@ -75,6 +78,10 @@ export default function ExtractorPage() {
   const [duplicateCount, setDuplicateCount] = useState(0);
   const [processedCount, setProcessedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [estimatedTotal, setEstimatedTotal] = useState(0);
+  const [totalEstimatedFollowers, setTotalEstimatedFollowers] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [show2FA, setShow2FA] = useState(false);
@@ -90,7 +97,7 @@ export default function ExtractorPage() {
   const runIdRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const _debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
@@ -108,7 +115,10 @@ export default function ExtractorPage() {
 
   const addTag = useCallback(
     async (val: string) => {
-      const trimmed = val.trim().toLowerCase().replace(/[^a-z0-9._]/g, "");
+      const trimmed = val
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._]/g, "");
       if (!trimmed || tags.includes(trimmed)) return;
       const result = await checkScrapedSourcesAction([trimmed]);
       const status = result[trimmed];
@@ -122,15 +132,18 @@ export default function ExtractorPage() {
     [tags],
   );
 
-  const removeTag = useCallback((idx: number) => {
-    const removed = tags[idx];
-    setTags((prev) => prev.filter((_, i) => i !== idx));
-    setScrapedStatus((prev) => {
-      const next = { ...prev };
-      delete next[removed];
-      return next;
-    });
-  }, [tags]);
+  const removeTag = useCallback(
+    (idx: number) => {
+      const removed = tags[idx];
+      setTags((prev) => prev.filter((_, i) => i !== idx));
+      setScrapedStatus((prev) => {
+        const next = { ...prev };
+        delete next[removed];
+        return next;
+      });
+    },
+    [tags],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -149,7 +162,10 @@ export default function ExtractorPage() {
     async (e: React.ClipboardEvent) => {
       e.preventDefault();
       const text = e.clipboardData.getData("text");
-      const parts = text.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+      const parts = text
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (!parts.length) return;
       const cleaned = parts.map((p) => p.toLowerCase().replace(/[^a-z0-9._]/g, "")).filter(Boolean);
       const existing = new Set(tags);
@@ -172,42 +188,41 @@ export default function ExtractorPage() {
     [tags],
   );
 
-  const handleFileUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async (ev) => {
-        const text = ev.target?.result as string;
-        if (!text) return;
-        const lines = text.split(/[\n\r]+/).filter(Boolean);
-        const keys = lines.flatMap((line) => line.split(",").map((s) => s.trim().replace(/^["']|["']$/g, ""))).filter(Boolean);
-        const cleaned = keys.map((k) => k.toLowerCase().replace(/[^a-z0-9._]/g, "")).filter(Boolean);
-        setTags((prev) => {
-          const existing = new Set(prev);
-          const unknowns = cleaned.filter((c) => !existing.has(c));
-          if (!unknowns.length) return prev;
-          checkScrapedSourcesAction(unknowns).then((statuses) => {
-            const toAdd = unknowns.filter((u) => !statuses[u]);
-            for (const u of unknowns) {
-              if (statuses[u]) setScrapedStatus((prev2) => ({ ...prev2, [u]: statuses[u] }));
-            }
-            if (toAdd.length > 0) {
-              setTags((prev2) => [...prev2, ...toAdd]);
-            }
-          });
-          return prev;
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const text = ev.target?.result as string;
+      if (!text) return;
+      const lines = text.split(/[\n\r]+/).filter(Boolean);
+      const keys = lines
+        .flatMap((line) => line.split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")))
+        .filter(Boolean);
+      const cleaned = keys.map((k) => k.toLowerCase().replace(/[^a-z0-9._]/g, "")).filter(Boolean);
+      setTags((prev) => {
+        const existing = new Set(prev);
+        const unknowns = cleaned.filter((c) => !existing.has(c));
+        if (!unknowns.length) return prev;
+        checkScrapedSourcesAction(unknowns).then((statuses) => {
+          const toAdd = unknowns.filter((u) => !statuses[u]);
+          for (const u of unknowns) {
+            if (statuses[u]) setScrapedStatus((prev2) => ({ ...prev2, [u]: statuses[u] }));
+          }
+          if (toAdd.length > 0) {
+            setTags((prev2) => [...prev2, ...toAdd]);
+          }
         });
-      };
-      reader.readAsText(file);
-      e.target.value = "";
-    },
-    [tags],
-  );
+        return prev;
+      });
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }, []);
 
   const downloadCSV = useCallback(() => {
     if (!tags.length) return;
-    const csv = "username\n" + tags.map((t) => t).join("\n");
+    const csv = `username\n${tags.map((t) => t).join("\n")}`;
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -245,6 +260,10 @@ export default function ExtractorPage() {
         if (counts.duplicateCount !== undefined) setDuplicateCount(counts.duplicateCount);
         setProcessedCount(counts.processedCount ?? 0);
         setTotalCount(counts.totalCount ?? 0);
+        if (last.page !== undefined) setCurrentPage(last.page);
+        if (last.totalPages !== undefined) setTotalPages(last.totalPages);
+        if (last.estimatedTotal !== undefined) setEstimatedTotal(last.estimatedTotal);
+        if (last.totalEstimatedFollowers !== undefined) setTotalEstimatedFollowers(last.totalEstimatedFollowers);
         break;
       case "follower":
         setFollowers((prev) => [...prev, { username: last.followerUsername! }]);
@@ -253,6 +272,10 @@ export default function ExtractorPage() {
         setInvalidCount(counts.invalidCount ?? 0);
         setProcessedCount(counts.processedCount ?? 0);
         setTotalCount(counts.totalCount ?? 0);
+        if (last.page !== undefined) setCurrentPage(last.page);
+        if (last.totalPages !== undefined) setTotalPages(last.totalPages);
+        if (last.estimatedTotal !== undefined) setEstimatedTotal(last.estimatedTotal);
+        if (last.totalEstimatedFollowers !== undefined) setTotalEstimatedFollowers(last.totalEstimatedFollowers);
         break;
       case "invalid":
         if (counts.invalidCount !== undefined) setInvalidCount(counts.invalidCount);
@@ -380,7 +403,7 @@ export default function ExtractorPage() {
           <CardTitle>Target Profiles</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-center gap-1.5 min-h-[42px] rounded-md border bg-transparent px-3 py-1.5 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring">
+          <div className="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-md border bg-transparent px-3 py-1.5 text-sm shadow-sm transition-colors focus-within:outline-none focus-within:ring-1 focus-within:ring-ring">
             {tags.map((t, i) => {
               const status = scrapedStatus[t];
               const isScraped = status === "scraped";
@@ -390,17 +413,29 @@ export default function ExtractorPage() {
                 <span
                   key={t}
                   data-status={status ?? ""}
-                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 text-xs font-medium data-[status=scraped]:border-amber-300 data-[status=scraped]:bg-amber-50 dark:data-[status=scraped]:bg-amber-950/30 data-[status=private]:border-violet-300 data-[status=private]:bg-violet-50 dark:data-[status=private]:bg-violet-950/30 data-[status=invalid]:border-red-300 data-[status=invalid]:bg-red-50 dark:data-[status=invalid]:bg-red-950/30"
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-secondary/50 px-2 py-0.5 font-medium text-xs data-[status=invalid]:border-red-300 data-[status=private]:border-violet-300 data-[status=scraped]:border-amber-300 data-[status=invalid]:bg-red-50 data-[status=private]:bg-violet-50 data-[status=scraped]:bg-amber-50 dark:data-[status=invalid]:bg-red-950/30 dark:data-[status=private]:bg-violet-950/30 dark:data-[status=scraped]:bg-amber-950/30"
                 >
-                  <span className={isScraped ? "text-amber-600 dark:text-amber-400" : isPrivate ? "text-violet-600 dark:text-violet-400" : isInvalid ? "text-red-600 dark:text-red-400" : ""}>{t}</span>
-                  {isScraped && <span className="text-[10px] text-amber-500 font-normal">scraped</span>}
+                  <span
+                    className={
+                      isScraped
+                        ? "text-amber-600 dark:text-amber-400"
+                        : isPrivate
+                          ? "text-violet-600 dark:text-violet-400"
+                          : isInvalid
+                            ? "text-red-600 dark:text-red-400"
+                            : ""
+                    }
+                  >
+                    {t}
+                  </span>
+                  {isScraped && <span className="font-normal text-[10px] text-amber-500">scraped</span>}
                   {isPrivate && <Lock className="h-3 w-3 text-violet-500" />}
                   {isInvalid && <Ban className="h-3 w-3 text-red-500" />}
                   {!running && (
                     <button
                       type="button"
                       onClick={() => removeTag(i)}
-                      className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
+                      className="ml-0.5 rounded-full p-0.5 transition-colors hover:bg-muted"
                     >
                       <X className="h-3 w-3" />
                     </button>
@@ -422,22 +457,20 @@ export default function ExtractorPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={startExtraction} disabled={running || tags.length === 0}>
               {running ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Extracting...</>
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Extracting...
+                </>
               ) : (
                 "Start Extraction"
               )}
             </Button>
             {running && (
-              <Button variant="destructive" onClick={stopExtraction}>Stop</Button>
+              <Button variant="destructive" onClick={stopExtraction}>
+                Stop
+              </Button>
             )}
             <div className="ml-auto flex gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
+              <input ref={fileInputRef} type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={running}>
@@ -469,11 +502,11 @@ export default function ExtractorPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               Instagram requires a verification code. Check your email or authenticator app.
             </p>
             <div className="flex items-end gap-2">
-              <div className="space-y-1 flex-1">
+              <div className="flex-1 space-y-1">
                 <Label htmlFor="2fa-code">Verification Code</Label>
                 <Input
                   id="2fa-code"
@@ -486,7 +519,9 @@ export default function ExtractorPage() {
               </div>
               <Button onClick={submit2FA} disabled={submitting2FA || !verificationCode.trim()}>
                 {submitting2FA ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</>
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...
+                  </>
                 ) : (
                   "Submit"
                 )}
@@ -503,12 +538,33 @@ export default function ExtractorPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {running && totalCount > 0 && (
-              <div className="space-y-1">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>{processedCount} of {totalCount} profiles</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-muted-foreground text-xs">
+                  <span>
+                    {processedCount} of {totalCount} profiles
+                  </span>
                   <span>{progress}%</span>
                 </div>
                 <Progress value={progress} className="h-2" />
+                {totalEstimatedFollowers > 0 && (
+                  <>
+                    <div className="flex justify-between text-muted-foreground text-xs">
+                      <span>
+                        {totalFollowers.toLocaleString()} of ~{totalEstimatedFollowers.toLocaleString()} followers
+                      </span>
+                      <span>{Math.round((totalFollowers / totalEstimatedFollowers) * 100)}%</span>
+                    </div>
+                    <Progress value={(totalFollowers / totalEstimatedFollowers) * 100} className="h-1.5" />
+                  </>
+                )}
+                {totalPages > 0 && (
+                  <div className="flex justify-between text-muted-foreground/70 text-xs">
+                    <span>
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <span>~{estimatedTotal.toLocaleString()} followers</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -519,7 +575,7 @@ export default function ExtractorPage() {
               </div>
             )}
             {error && (
-              <div className="flex items-center gap-2 text-sm text-destructive">
+              <div className="flex items-center gap-2 text-destructive text-sm">
                 <AlertCircle className="h-4 w-4" />
                 <span>{error}</span>
               </div>
@@ -530,20 +586,23 @@ export default function ExtractorPage() {
                 <Users className="h-3.5 w-3.5" />
                 {totalFollowers} followers
               </Badge>
-              <Badge variant="outline" className="gap-1 text-sm text-amber-600 border-amber-300">
+              <Badge variant="outline" className="gap-1 border-amber-300 text-amber-600 text-sm">
                 <Ban className="h-3.5 w-3.5" />
                 {invalidCount} invalid
               </Badge>
-              <Badge variant="outline" className="gap-1 text-sm text-violet-600 border-violet-300 dark:text-violet-400 dark:border-violet-800">
+              <Badge
+                variant="outline"
+                className="gap-1 border-violet-300 text-sm text-violet-600 dark:border-violet-800 dark:text-violet-400"
+              >
                 <Lock className="h-3.5 w-3.5" />
                 {privateCount} private
               </Badge>
-              <Badge variant="outline" className="gap-1 text-sm text-muted-foreground">
+              <Badge variant="outline" className="gap-1 text-muted-foreground text-sm">
                 <AlertCircle className="h-3.5 w-3.5" />
                 {duplicateCount} duplicates ignored
               </Badge>
               {done && (
-                <Badge className="gap-1 text-sm bg-green-600">
+                <Badge className="gap-1 bg-green-600 text-sm">
                   <CheckCircle className="h-3.5 w-3.5" />
                   Complete
                 </Badge>
@@ -567,12 +626,12 @@ export default function ExtractorPage() {
                 {followers.map((f, i) => (
                   <div
                     key={`${f.username}-${i}`}
-                    className="flex items-center gap-2.5 text-sm px-2 py-1.5 rounded hover:bg-muted/50"
+                    className="flex items-center gap-2.5 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
                   >
                     {f.avatarUrl ? (
-                      <img src={f.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover shrink-0" />
+                      <img src={f.avatarUrl} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover" />
                     ) : (
-                      <div className="h-7 w-7 rounded-full bg-muted shrink-0 flex items-center justify-center">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
                         <Users className="h-3.5 w-3.5 text-muted-foreground" />
                       </div>
                     )}
@@ -594,17 +653,17 @@ export default function ExtractorPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
               {displaySources.map((s) => (
                 <div
                   key={s.profileUsername}
-                  className="flex flex-col items-center gap-1.5 p-3 rounded-lg hover:bg-muted/50 transition-colors"
+                  className="flex flex-col items-center gap-1.5 rounded-lg p-3 transition-colors hover:bg-muted/50"
                 >
                   <div className="relative">
                     {s.profilePicUrl ? (
                       <img src={s.profilePicUrl} alt="" className="h-14 w-14 rounded-full object-cover" />
                     ) : (
-                      <div className="h-14 w-14 rounded-full bg-muted flex items-center justify-center">
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted">
                         {s.isPrivate ? (
                           <Lock className="h-5 w-5 text-violet-500" />
                         ) : (
@@ -613,21 +672,17 @@ export default function ExtractorPage() {
                       </div>
                     )}
                     {s.isPrivate ? (
-                      <div className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-violet-600 px-1 text-[10px] font-semibold text-white shadow-xs">
+                      <div className="absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-violet-600 px-1 font-semibold text-[10px] text-white shadow-xs">
                         <Lock className="h-3 w-3" />
                       </div>
                     ) : (
-                      <div className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground shadow-xs">
+                      <div className="absolute -right-1 -bottom-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 font-semibold text-[10px] text-primary-foreground shadow-xs">
                         {s.followerCount}
                       </div>
                     )}
                   </div>
-                  <span className="text-xs font-medium text-center truncate max-w-full">
-                    @{s.profileUsername}
-                  </span>
-                  {s.isPrivate && (
-                    <span className="text-[10px] text-violet-500 font-medium">Private</span>
-                  )}
+                  <span className="max-w-full truncate text-center font-medium text-xs">@{s.profileUsername}</span>
+                  {s.isPrivate && <span className="font-medium text-[10px] text-violet-500">Private</span>}
                 </div>
               ))}
             </div>
@@ -639,9 +694,13 @@ export default function ExtractorPage() {
                 onClick={() => setShowAllSources(!showAllSources)}
               >
                 {showAllSources ? (
-                  <><ChevronUp className="mr-1 h-4 w-4" /> Show less</>
+                  <>
+                    <ChevronUp className="mr-1 h-4 w-4" /> Show less
+                  </>
                 ) : (
-                  <><ChevronDown className="mr-1 h-4 w-4" /> Show all {scrapedSourcesTotal}</>
+                  <>
+                    <ChevronDown className="mr-1 h-4 w-4" /> Show all {scrapedSourcesTotal}
+                  </>
                 )}
               </Button>
             )}

@@ -1,14 +1,21 @@
-import { createDriver } from "./driver";
+import {
+  getExistingFollowerUsernames,
+  isProfileAlreadyScraped,
+  markProfileInvalid,
+  markProfilePrivate,
+  updateTargetProfileScraped,
+  upsertFollower,
+} from "@/lib/db/utils/instagram";
+
+import { createChallenge } from "./challenges";
+import { createDriver, extractCookies } from "./driver";
+import { extractFollowersGraphQLViaDriver } from "./graphql-extractor";
 import { loginToInstagram } from "./login";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
-import { upsertFollower, updateTargetProfileScraped, getExistingFollowerUsernames, isProfileAlreadyScraped, markProfilePrivate, markProfileInvalid } from "@/lib/db/utils/instagram";
-import { createChallenge } from "./challenges";
 import path from "node:path";
 
 const ACTIONS_DIR = path.resolve(process.cwd(), "src/server/instagram/actions");
-const NAVIGATE_YAML = path.join(ACTIONS_DIR, "navigate-profile.yaml");
-const FOLLOWERS_YAML = path.join(ACTIONS_DIR, "followers.yaml");
 const REELS_YAML = path.join(ACTIONS_DIR, "reels.yaml");
 
 const REEL_SCROLL_INTERVAL = 5;
@@ -21,11 +28,16 @@ export interface ProgressEvent {
   count?: number;
   totalFollowers?: number;
   invalidCount?: number;
+  privateCount?: number;
   duplicateCount?: number;
   processedCount?: number;
   totalCount?: number;
   error?: string;
   credentialId?: string;
+  page?: number;
+  totalPages?: number;
+  estimatedTotal?: number;
+  totalEstimatedFollowers?: number;
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void | Promise<void>;
@@ -37,17 +49,23 @@ export interface StreamOptions {
     verificationCode?: string;
   };
   credentialId?: string;
-  existingCookies?: Array<{ name: string; value: string; domain: string; path: string; httpOnly?: boolean; secure?: boolean; expiry?: number }>;
+  existingCookies?: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    httpOnly?: boolean;
+    secure?: boolean;
+    expiry?: number;
+  }>;
   usernames: string[];
 }
 
-export async function extractFollowersStream(
-  options: StreamOptions,
-  onProgress: ProgressCallback,
-): Promise<void> {
+export async function extractFollowersStream(options: StreamOptions, onProgress: ProgressCallback): Promise<void> {
   const driver = await createDriver();
 
   let totalFollowers = 0;
+  let totalEstimatedFollowers = 0;
   let invalidCount = 0;
   let privateCount = 0;
   let duplicateCount = 0;
@@ -118,7 +136,6 @@ export async function extractFollowersStream(
           await driver.wait(() => driver.executeScript("return !!document.querySelector('section main')"), 20000);
 
           if (options.credentialId) {
-            const { extractCookies } = await import("./driver");
             const { saveSession } = await import("@/lib/db/utils/instagram");
             const cookies = await extractCookies(driver);
             await saveSession(options.credentialId, {
@@ -148,6 +165,12 @@ export async function extractFollowersStream(
       totalCount,
     });
 
+    const ctx: VariableContext = {
+      credentials: options.credentials,
+      profile: { username: "" },
+    };
+    const engine = new ScrapingEngine(driver, ctx);
+
     for (let i = 0; i < options.usernames.length; i++) {
       const targetUsername = options.usernames[i];
       processedCount = i + 1;
@@ -167,25 +190,90 @@ export async function extractFollowersStream(
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
-        message: `[${processedCount}/${totalCount}] Extracting followers for @${targetUsername}...`,
+        message: `[${processedCount}/${totalCount}] Fetching followers for @${targetUsername} via API...`,
         processedCount,
         totalCount,
       });
 
-      const ctx: VariableContext = {
-        credentials: options.credentials,
-        profile: { username: targetUsername },
-      };
+      let profilePicUrl = "";
+      let extractedCount = 0;
 
-      const engine = new ScrapingEngine(driver, ctx);
-
-      let navResult: Record<string, unknown>;
       try {
-        const navDef = await engine.loadDefinition(NAVIGATE_YAML);
-        navResult = await engine.execute(navDef);
+        const existingFollowers = await getExistingFollowerUsernames(targetUsername);
+
+        const result = await extractFollowersGraphQLViaDriver(driver, targetUsername, async (gqlEvent) => {
+          if (gqlEvent.page === 1 && gqlEvent.estimatedTotal > 0) {
+            totalEstimatedFollowers += gqlEvent.estimatedTotal;
+          }
+
+          await onProgress({
+            type: "status",
+            profileUsername: targetUsername,
+            message: gqlEvent.message,
+            page: gqlEvent.page,
+            totalPages: gqlEvent.totalPages,
+            estimatedTotal: gqlEvent.estimatedTotal,
+            totalEstimatedFollowers,
+            processedCount,
+            totalCount,
+          });
+
+          if (gqlEvent.followerUsername) {
+            const username = gqlEvent.followerUsername;
+            if (existingFollowers.has(username)) {
+              duplicateCount++;
+            } else {
+              existingFollowers.add(username);
+              await upsertFollower(targetUsername, username, undefined, gqlEvent.avatarUrl);
+              extractedCount++;
+              totalFollowers++;
+            }
+
+            await onProgress({
+              type: "follower",
+              profileUsername: targetUsername,
+              followerUsername: username,
+              count: extractedCount,
+              totalFollowers,
+              totalEstimatedFollowers,
+              duplicateCount,
+              invalidCount,
+              processedCount,
+              totalCount,
+            });
+          }
+        });
+
+        if (result.isPrivate) {
+          await markProfilePrivate(targetUsername);
+          privateCount++;
+          await onProgress({
+            type: "private",
+            profileUsername: targetUsername,
+            message: `@${targetUsername} is private — skipping`,
+            privateCount,
+            processedCount,
+            totalCount,
+          });
+          continue;
+        }
+
+        profilePicUrl = result.profilePicUrl;
+
+        await onProgress({
+          type: "follower",
+          profileUsername: targetUsername,
+          followerUsername: undefined,
+          count: extractedCount,
+          totalFollowers,
+          duplicateCount,
+          invalidCount,
+          processedCount,
+          totalCount,
+        });
       } catch (err: any) {
-        const text = await driver.executeScript("return document.body.innerText");
-        if (text?.toLowerCase().includes("sorry, this page isn't available")) {
+        const msg = err.message || "";
+        if (msg.includes("PROFILE_NOT_FOUND")) {
           await markProfileInvalid(targetUsername);
           invalidCount++;
           await onProgress({
@@ -200,7 +288,7 @@ export async function extractFollowersStream(
           await onProgress({
             type: "status",
             profileUsername: targetUsername,
-            message: `@${targetUsername}: navigation error — ${err.message || "unknown"} — skipping`,
+            message: `@${targetUsername}: API error — ${msg} — skipping`,
             processedCount,
             totalCount,
           });
@@ -208,115 +296,12 @@ export async function extractFollowersStream(
         continue;
       }
 
-      const navError = navResult.checkProfileError as { error?: string } | undefined;
-      if (navError?.error === "PROFILE_NOT_FOUND") {
-        await markProfileInvalid(targetUsername);
-        invalidCount++;
-        await onProgress({
-          type: "invalid",
-          profileUsername: targetUsername,
-          message: `@${targetUsername} not found`,
-          invalidCount,
-          processedCount,
-          totalCount,
-        });
-        continue;
-      }
-
-      const privateError = navResult.checkPrivateProfile as { error?: string } | undefined;
-      if (privateError?.error === "PROFILE_IS_PRIVATE") {
-        await markProfilePrivate(targetUsername);
-        privateCount++;
-        await onProgress({
-          type: "private",
-          profileUsername: targetUsername,
-          message: `@${targetUsername} is private — skipping`,
-          privateCount,
-          processedCount,
-          totalCount,
-        });
-        continue;
-      }
+      await updateTargetProfileScraped(targetUsername, extractedCount, profilePicUrl);
 
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
-        message: `[${processedCount}/${totalCount}] Opening followers dialog for @${targetUsername}...`,
-        processedCount,
-        totalCount,
-      });
-
-      const navProfilePic = navResult.extractProfilePic as string | undefined
-
-      const followersDef = await engine.loadDefinition(FOLLOWERS_YAML);
-      let rawFollowers: Array<{ username: string; avatarUrl?: string }> = [];
-
-      try {
-        const followersResult = await engine.execute(followersDef);
-        rawFollowers = (followersResult.finalExtract as Array<{ username: string; avatarUrl?: string }>) || [];
-      } catch (err: any) {
-        const isPrivate = await driver.executeScript(
-          "return document.body.innerText.toLowerCase().includes('this profile is private')",
-        );
-        if (isPrivate) {
-          await markProfilePrivate(targetUsername);
-          privateCount++;
-          await onProgress({
-            type: "private",
-            profileUsername: targetUsername,
-            message: `@${targetUsername} is private — skipping`,
-            privateCount,
-            processedCount,
-            totalCount,
-          });
-          continue;
-        }
-        await onProgress({
-          type: "status",
-          profileUsername: targetUsername,
-          message: `@${targetUsername}: dialog error — ${err.message || "timeout"} — skipping`,
-          processedCount,
-          totalCount,
-        });
-        continue;
-      }
-
-      const existingFollowers = await getExistingFollowerUsernames(targetUsername);
-      let profileCount = 0;
-
-      for (const entry of rawFollowers) {
-        const trimmed = entry.username.trim();
-        if (!trimmed) continue;
-
-        if (existingFollowers.has(trimmed)) {
-          duplicateCount++;
-          continue;
-        }
-        existingFollowers.add(trimmed);
-
-        await upsertFollower(targetUsername, trimmed, undefined, entry.avatarUrl);
-        profileCount++;
-        totalFollowers++;
-
-        await onProgress({
-          type: "follower",
-          profileUsername: targetUsername,
-          followerUsername: trimmed,
-          count: profileCount,
-          totalFollowers,
-          duplicateCount,
-          invalidCount,
-          processedCount,
-          totalCount,
-        });
-      }
-
-      await updateTargetProfileScraped(targetUsername, profileCount, navProfilePic);
-
-      await onProgress({
-        type: "status",
-        profileUsername: targetUsername,
-        message: `Done — extracted ${profileCount} followers from @${targetUsername}`,
+        message: `Done — extracted ${extractedCount} followers from @${targetUsername}`,
         totalFollowers,
         duplicateCount,
         invalidCount,
@@ -348,6 +333,7 @@ export async function extractFollowersStream(
       type: "done",
       message: "Extraction complete",
       totalFollowers,
+      totalEstimatedFollowers,
       invalidCount,
       privateCount,
       duplicateCount,
