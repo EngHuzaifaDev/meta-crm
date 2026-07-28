@@ -48,7 +48,8 @@ interface ScrapedProfile {
 interface SessionStatus {
   label: string;
   requestCount: number;
-  maxPerHour: number;
+  maxPerHour: number
+  softLimit: number;
   coolingDown: boolean;
   cooldownRemainingMs: number;
 }
@@ -401,8 +402,8 @@ export default function MultiSessionExtractionPage() {
                 <div key={s.label} className="flex items-center gap-3 text-sm">
                   <span className="font-medium w-28 shrink-0">{s.label}</span>
                   <Progress value={(s.requestCount / s.maxPerHour) * 100} className="h-2 flex-1" />
-                  <span className="text-xs text-muted-foreground w-24 text-right">
-                    {s.requestCount}/{s.maxPerHour}
+                  <span className="text-xs text-muted-foreground w-36 text-right">
+                    {s.requestCount}/{s.softLimit} (soft) · {s.maxPerHour} (max)
                   </span>
                   {s.coolingDown && (
                     <Badge variant="outline" className="border-orange-300 text-orange-600 text-xs whitespace-nowrap">

@@ -2,6 +2,7 @@ import type { CookieObject, SessionFromCookies } from "./cookie-session";
 import { buildInstagramHeaders, parseCookies } from "./cookie-session";
 
 export const MAX_REQUESTS_PER_HOUR = 175;
+export const SOFT_LIMIT = 170;
 export const COOLDOWN_MS = 3600_000;
 
 export interface SessionInput {
@@ -59,7 +60,7 @@ export function getNextSession(sessions: TrackedSession[]): TrackedSession | nul
     }
 
     if (s.coolingDown) continue;
-    if (s.requestCount >= MAX_REQUESTS_PER_HOUR) continue;
+    if (s.requestCount >= SOFT_LIMIT) continue;
 
     if (!best || s.requestCount < best.requestCount) {
       best = s;
@@ -98,6 +99,7 @@ export function getSessionsSnapshot(sessions: TrackedSession[]): Array<{
   label: string;
   requestCount: number;
   maxPerHour: number;
+  softLimit: number;
   coolingDown: boolean;
   cooldownRemainingMs: number;
 }> {
@@ -106,6 +108,7 @@ export function getSessionsSnapshot(sessions: TrackedSession[]): Array<{
     label: s.label,
     requestCount: s.requestCount,
     maxPerHour: MAX_REQUESTS_PER_HOUR,
+    softLimit: SOFT_LIMIT,
     coolingDown: s.coolingDown,
     cooldownRemainingMs: s.coolingDown ? Math.max(0, s.cooldownUntil - now) : 0,
   }));
