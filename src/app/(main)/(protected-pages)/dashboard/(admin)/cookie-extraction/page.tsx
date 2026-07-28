@@ -1,122 +1,114 @@
-"use client"
+"use client";
 
-import { useCallback, useEffect, useRef, useState } from "react"
-import {
-  AlertCircle,
-  Ban,
-  Bug,
-  CheckCircle,
-  ClipboardPaste,
-  Loader2,
-  Lock,
-  Play,
-  Terminal,
-  Users,
-} from "lucide-react"
-import { startCookieExtractionAction, pollExtractionAction } from "@/server/instagram/actions"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Label } from "@/components/ui/label"
-import { Progress } from "@/components/ui/progress"
-import type { ProgressEvent } from "@/server/instagram/streaming-extractor"
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { AlertCircle, Ban, Bug, CheckCircle, ClipboardPaste, Loader2, Lock, Play, Terminal, Users } from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import { pollExtractionAction, startCookieExtractionAction } from "@/server/instagram/actions";
+import type { ProgressEvent } from "@/server/instagram/streaming-extractor";
 
 export default function CookieExtractionPage() {
-  const [cookiesJson, setCookiesJson] = useState("")
-  const [usernames, setUsernames] = useState("")
-  const [testMode, setTestMode] = useState(false)
-  const [running, setRunning] = useState(false)
-  const [events, setEvents] = useState<ProgressEvent[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const eventsEndRef = useRef<HTMLDivElement | null>(null)
+  const [cookiesJson, setCookiesJson] = useState("");
+  const [usernames, setUsernames] = useState("");
+  const [testMode, setTestMode] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [events, setEvents] = useState<ProgressEvent[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const eventsEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [events])
+    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [events]);
 
-  const last = events[events.length - 1]
-  const done = last?.type === "done"
+  const last = events[events.length - 1];
+  const done = last?.type === "done";
 
-  const totalFollowers = last?.totalFollowers ?? 0
-  const totalEstimatedFollowers = last?.totalEstimatedFollowers ?? 0
-  const invalidCount = last?.invalidCount ?? 0
-  const privateCount = last?.privateCount ?? 0
-  const duplicateCount = last?.duplicateCount ?? 0
-  const processedCount = last?.processedCount ?? 0
-  const totalCount = last?.totalCount ?? 0
-  const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0
-  const followerProgress = totalEstimatedFollowers > 0
-    ? Math.round((totalFollowers / totalEstimatedFollowers) * 100)
-    : 0
+  const totalFollowers = last?.totalFollowers ?? 0;
+  const totalEstimatedFollowers = last?.totalEstimatedFollowers ?? 0;
+  const invalidCount = last?.invalidCount ?? 0;
+  const privateCount = last?.privateCount ?? 0;
+  const duplicateCount = last?.duplicateCount ?? 0;
+  const processedCount = last?.processedCount ?? 0;
+  const totalCount = last?.totalCount ?? 0;
+  const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
+  const followerProgress =
+    totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
 
   const startExtraction = async () => {
-    setError(null)
-    setEvents([])
+    setError(null);
+    setEvents([]);
 
     if (!cookiesJson.trim()) {
-      setError("Paste your Instagram cookies JSON first")
-      return
+      setError("Paste your Instagram cookies JSON first");
+      return;
     }
 
-    let parsed: any
+    let parsed: any;
     try {
-      parsed = JSON.parse(cookiesJson.trim())
-      if (!Array.isArray(parsed)) throw new Error()
+      parsed = JSON.parse(cookiesJson.trim());
+      if (!Array.isArray(parsed)) throw new Error();
     } catch {
-      setError("Invalid JSON — must be an array of cookie objects")
-      return
+      setError("Invalid JSON — must be an array of cookie objects");
+      return;
     }
 
     const names = usernames
       .split("\n")
       .map((s) => s.trim())
-      .filter(Boolean)
+      .filter(Boolean);
     if (names.length === 0) {
-      setError("Enter at least one username")
-      return
+      setError("Enter at least one username");
+      return;
     }
 
-    const targetNames = names
+    const targetNames = names;
     if (testMode) {
-      setEvents([{
-        type: "status",
-        message: `TEST MODE — fetching 2 pages per profile (${targetNames.length} profiles total)`,
-        totalCount: targetNames.length,
-      }])
+      setEvents([
+        {
+          type: "status",
+          message: `TEST MODE — fetching 2 pages per profile (${targetNames.length} profiles total)`,
+          totalCount: targetNames.length,
+        },
+      ]);
     }
 
-    setRunning(true)
+    setRunning(true);
 
-    const result = await startCookieExtractionAction(cookiesJson.trim(), targetNames, testMode ? 2 : undefined)
+    const result = await startCookieExtractionAction(cookiesJson.trim(), targetNames, testMode ? 2 : undefined);
     if ("error" in result) {
-      setError(result.error as string)
-      setRunning(false)
-      return
+      setError(result.error as string);
+      setRunning(false);
+      return;
     }
 
-    const runId = result.runId
+    const runId = result.runId;
 
-    let lastEventCount = 0
+    let lastEventCount = 0;
     pollRef.current = setInterval(async () => {
-      const state = await pollExtractionAction(runId)
+      const state = await pollExtractionAction(runId);
       if (!state) {
-        clearInterval(pollRef.current!)
-        setRunning(false)
-        return
+        clearInterval(pollRef.current!);
+        setRunning(false);
+        return;
       }
       if (state.progress.length > lastEventCount) {
-        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[]
-        lastEventCount = state.progress.length
-        setEvents((p) => [...p, ...newEvents])
+        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
+        lastEventCount = state.progress.length;
+        setEvents((p) => [...p, ...newEvents]);
       }
       if (state.status !== "running") {
-        clearInterval(pollRef.current!)
-        setRunning(false)
+        clearInterval(pollRef.current!);
+        setRunning(false);
       }
-    }, 1000)
-  }
+    }, 1000);
+  };
 
   return (
     <div className="space-y-6 p-6">
@@ -131,9 +123,7 @@ export default function CookieExtractionPage() {
           <div className="space-y-2">
             <Label htmlFor="cookies">
               Instagram Cookies JSON
-              <span className="text-xs text-muted-foreground ml-2">
-                (paste from browser cookie editor)
-              </span>
+              <span className="text-xs text-muted-foreground ml-2">(paste from browser cookie editor)</span>
             </Label>
             <textarea
               id="cookies"
@@ -148,9 +138,7 @@ export default function CookieExtractionPage() {
           <div className="space-y-2">
             <Label htmlFor="usernames">
               Target Usernames
-              <span className="text-xs text-muted-foreground ml-2">
-                (one per line)
-              </span>
+              <span className="text-xs text-muted-foreground ml-2">(one per line)</span>
             </Label>
             <textarea
               id="usernames"
@@ -231,10 +219,8 @@ export default function CookieExtractionPage() {
               <div className="flex items-center gap-2 text-sm">
                 {running && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                 <span>
-                  {last.profileUsername ? (
-                    <span className="font-medium">@{last.profileUsername}</span>
-                  ) : null}
-                  {" "}{last.message}
+                  {last.profileUsername ? <span className="font-medium">@{last.profileUsername}</span> : null}{" "}
+                  {last.message}
                 </span>
               </div>
             )}
@@ -284,9 +270,7 @@ export default function CookieExtractionPage() {
                               : ""
                     }
                   >
-                    {ev.type === "follower"
-                      ? `+ ${ev.followerUsername}`
-                      : ev.message || ev.error || ""}
+                    {ev.type === "follower" ? `+ ${ev.followerUsername}` : ev.message || ev.error || ""}
                   </span>
                 </div>
               ))}
@@ -296,5 +280,5 @@ export default function CookieExtractionPage() {
         </Card>
       )}
     </div>
-  )
+  );
 }

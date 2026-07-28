@@ -14,7 +14,7 @@ export function createChallenge(credentialId: string): Promise<string> {
     setTimeout(() => {
       if (pendingChallenges.has(credentialId)) {
         pendingChallenges.delete(credentialId);
-        reject(new Error('2FA challenge timed out'));
+        reject(new Error("2FA challenge timed out"));
       }
     }, CHALLENGE_TIMEOUT);
   });

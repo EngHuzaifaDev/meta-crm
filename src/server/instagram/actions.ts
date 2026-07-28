@@ -1,15 +1,16 @@
 "use server";
 
 import { headers } from "next/headers";
+
 import { auth } from "@/lib/auth";
+import type { SessionData } from "@/lib/db/utils/instagram";
 import {
+  clearSession,
   createCredential,
   getActiveCredentials,
   getCredentialById,
   saveSession,
-  clearSession,
 } from "@/lib/db/utils/instagram";
-import type { SessionData } from "@/lib/db/utils/instagram";
 
 export async function getCredentialsAction() {
   const session = await auth.api.getSession({ headers: await headers() });
@@ -54,10 +55,7 @@ export async function deleteCredentialAction(id: string) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session || session.user.role !== 0) return { error: "Unauthorized" };
 
-  const [{ mongodbInstance }, { ObjectId }] = await Promise.all([
-    import("@/lib/db/mongodb"),
-    import("mongodb"),
-  ]);
+  const [{ mongodbInstance }, { ObjectId }] = await Promise.all([import("@/lib/db/mongodb"), import("mongodb")]);
   await mongodbInstance.collection("instagramCredentials").deleteOne({ _id: new ObjectId(id) as any });
 
   return { success: true };
@@ -88,16 +86,14 @@ export async function startTestLoginAction(credentialId: string) {
   return { runId };
 }
 
-async function runTestLoginInBackground(
-  cred: any,
-  credentialId: string,
-  runId: string,
-) {
+async function runTestLoginInBackground(cred: any, credentialId: string, runId: string) {
   const { pushEvent } = await import("./progress-store");
   const { createDriver } = await import("./driver");
   const { loginToInstagram } = await import("./login");
   const { createChallenge } = await import("./challenges");
-  const { default: { By, until } } = await import("selenium-webdriver");
+  const {
+    default: { By, until },
+  } = await import("selenium-webdriver");
 
   const driver = await createDriver();
   try {
@@ -255,10 +251,7 @@ export async function startCookieExtractionAction(cookiesJson: string, usernames
 
   const runId = createRun();
 
-  extractFollowersStreamFromCookies(
-    { cookies, usernames, maxPages },
-    (event) => pushEvent(runId, event),
-  );
+  extractFollowersStreamFromCookies({ cookies, usernames, maxPages }, (event) => pushEvent(runId, event));
 
   return { runId };
 }

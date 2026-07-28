@@ -6,7 +6,6 @@ import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { useSession } from "@/lib/auth-client";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +26,7 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import type {
   NavBadge,

@@ -23,7 +23,7 @@ function interpolate(value: string, ctx: VariableContext): string {
         return _match;
       }
     }
-    return obj == null ? '' : String(obj);
+    return obj == null ? "" : String(obj);
   });
 }
 
@@ -123,7 +123,9 @@ export class ScrapingEngine {
              el.dispatchEvent(new Event('change', { bubbles: true }));
              el.dispatchEvent(new Event('blur', { bubbles: true }));
            }`,
-          el, value, action.clear,
+          el,
+          value,
+          action.clear,
         );
         await humanDelay(400, 800);
         break;

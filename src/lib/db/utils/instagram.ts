@@ -3,7 +3,15 @@ import { ObjectId } from "mongodb";
 import { mongodbInstance } from "@/lib/db/mongodb";
 
 export interface SessionData {
-  cookies: Array<{ name: string; value: string; domain: string; path: string; httpOnly?: boolean; secure?: boolean; expiry?: number }>;
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    httpOnly?: boolean;
+    secure?: boolean;
+    expiry?: number;
+  }>;
   userAgent?: string;
   savedAt: Date;
   expiresAt?: Date;
@@ -62,17 +70,18 @@ export async function getActiveCredentials(): Promise<InstagramCredential[]> {
 }
 
 function toObjectId(id: string) {
-  try { return new ObjectId(id); } catch { return id; }
+  try {
+    return new ObjectId(id);
+  } catch {
+    return id;
+  }
 }
 
 export async function getCredentialById(id: string): Promise<InstagramCredential | null> {
   return credentialsCol.findOne({ _id: toObjectId(id) as any });
 }
 
-export async function saveSession(
-  credentialId: string,
-  session: SessionData,
-): Promise<void> {
+export async function saveSession(credentialId: string, session: SessionData): Promise<void> {
   await credentialsCol.updateOne(
     { _id: toObjectId(credentialId) as any },
     { $set: { session, updatedAt: new Date() } },
@@ -150,13 +159,8 @@ export async function getFollowersForProfile(profileUsername: string): Promise<I
 }
 
 export async function getExistingFollowerUsernames(sourceProfileUsername: string): Promise<Set<string>> {
-  const docs = await followersCol
-    .find(
-      { sourceProfileUsername },
-      { projection: { followerUsername: 1 } },
-    )
-    .toArray()
-  return new Set(docs.map((d) => d.followerUsername))
+  const docs = await followersCol.find({ sourceProfileUsername }, { projection: { followerUsername: 1 } }).toArray();
+  return new Set(docs.map((d) => d.followerUsername));
 }
 
 export async function isProfileAlreadyScraped(profileUsername: string): Promise<boolean> {
@@ -166,16 +170,18 @@ export async function isProfileAlreadyScraped(profileUsername: string): Promise<
       { profileUsername, $or: [{ isPrivate: true }, { isInvalid: true }] },
       { projection: { _id: 1 } },
     ),
-  ])
-  return !!follower || !!flag
+  ]);
+  return !!follower || !!flag;
 }
 
-export async function checkScrapedStatusBatch(usernames: string[]): Promise<Record<string, "scraped" | "private" | "invalid" | null>> {
+export async function checkScrapedStatusBatch(
+  usernames: string[],
+): Promise<Record<string, "scraped" | "private" | "invalid" | null>> {
   const [followers, flags] = await Promise.all([
     followersCol
       .aggregate([
         { $match: { sourceProfileUsername: { $in: usernames } } },
-        { $group: { _id: '$sourceProfileUsername' } },
+        { $group: { _id: "$sourceProfileUsername" } },
       ])
       .toArray(),
     targetProfilesCol
@@ -184,27 +190,27 @@ export async function checkScrapedStatusBatch(usernames: string[]): Promise<Reco
         { projection: { profileUsername: 1, isPrivate: 1, isInvalid: 1 } },
       )
       .toArray(),
-  ])
-  const scraped = new Set(followers.map((d) => String(d._id)))
-  const lookup: Record<string, "private" | "invalid"> = {}
+  ]);
+  const scraped = new Set(followers.map((d) => String(d._id)));
+  const lookup: Record<string, "private" | "invalid"> = {};
   for (const d of flags) {
-    if (d.isPrivate) lookup[d.profileUsername] = "private"
-    else if (d.isInvalid) lookup[d.profileUsername] = "invalid"
+    if (d.isPrivate) lookup[d.profileUsername] = "private";
+    else if (d.isInvalid) lookup[d.profileUsername] = "invalid";
   }
-  const result: Record<string, "scraped" | "private" | "invalid" | null> = {}
+  const result: Record<string, "scraped" | "private" | "invalid" | null> = {};
   for (const u of usernames) {
-    if (scraped.has(u)) result[u] = "scraped"
-    else if (lookup[u]) result[u] = lookup[u]
-    else result[u] = null
+    if (scraped.has(u)) result[u] = "scraped";
+    else if (lookup[u]) result[u] = lookup[u];
+    else result[u] = null;
   }
-  return result
+  return result;
 }
 
 export async function countScrapedSources(): Promise<number> {
   const docs = await followersCol
-    .aggregate([{ $group: { _id: '$sourceProfileUsername' } }, { $count: 'total' }])
-    .toArray()
-  return docs[0]?.total ?? 0
+    .aggregate([{ $group: { _id: "$sourceProfileUsername" } }, { $count: "total" }])
+    .toArray();
+  return docs[0]?.total ?? 0;
 }
 
 export async function markProfilePrivate(profileUsername: string): Promise<void> {
@@ -212,7 +218,7 @@ export async function markProfilePrivate(profileUsername: string): Promise<void>
     { profileUsername },
     { $set: { isPrivate: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
-  )
+  );
 }
 
 export async function markProfileInvalid(profileUsername: string): Promise<void> {
@@ -220,56 +226,57 @@ export async function markProfileInvalid(profileUsername: string): Promise<void>
     { profileUsername },
     { $set: { isInvalid: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
-  )
+  );
 }
 
-export async function getScrapedSources(limit = 10): Promise<
-  Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string; isPrivate?: boolean }>
-> {
+export async function getScrapedSources(
+  limit = 10,
+): Promise<Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string; isPrivate?: boolean }>> {
   const pipeline = [
-    { $group: { _id: '$sourceProfileUsername', followerCount: { $sum: 1 } } },
+    { $group: { _id: "$sourceProfileUsername", followerCount: { $sum: 1 } } },
     { $sort: { followerCount: -1 } },
     { $limit: limit },
     {
       $lookup: {
-        from: 'instagramTargetProfiles',
-        localField: '_id',
-        foreignField: 'profileUsername',
-        as: 'profile',
+        from: "instagramTargetProfiles",
+        localField: "_id",
+        foreignField: "profileUsername",
+        as: "profile",
       },
     },
-    { $unwind: { path: '$profile', preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: "$profile", preserveNullAndEmptyArrays: true } },
     {
       $project: {
-        profileUsername: '$_id',
+        profileUsername: "$_id",
         followerCount: 1,
-        profilePicUrl: { $ifNull: ['$profile.profilePicUrl', null] },
-        isPrivate: { $ifNull: ['$profile.isPrivate', false] },
-        isInvalid: { $ifNull: ['$profile.isInvalid', false] },
+        profilePicUrl: { $ifNull: ["$profile.profilePicUrl", null] },
+        isPrivate: { $ifNull: ["$profile.isPrivate", false] },
+        isInvalid: { $ifNull: ["$profile.isInvalid", false] },
       },
     },
-  ]
-  return followersCol.aggregate(pipeline).toArray() as any
+  ];
+  return followersCol.aggregate(pipeline).toArray() as any;
 }
 
-export async function saveSourceProfilePic(
-  profileUsername: string,
-  profilePicUrl: string,
-): Promise<void> {
+export async function saveSourceProfilePic(profileUsername: string, profilePicUrl: string): Promise<void> {
   await targetProfilesCol.updateOne(
     { profileUsername },
     { $set: { profilePicUrl, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
-  )
+  );
 }
 
-export async function updateTargetProfileScraped(profileUsername: string, followerCount: number, profilePicUrl?: string): Promise<void> {
+export async function updateTargetProfileScraped(
+  profileUsername: string,
+  followerCount: number,
+  profilePicUrl?: string,
+): Promise<void> {
   const $set: Record<string, unknown> = {
     lastScrapedAt: new Date(),
     followerCount,
     updatedAt: new Date(),
-  }
-  if (profilePicUrl) $set.profilePicUrl = profilePicUrl
+  };
+  if (profilePicUrl) $set.profilePicUrl = profilePicUrl;
   await targetProfilesCol.updateOne(
     { profileUsername },
     { $set, $setOnInsert: { createdAt: new Date() } },

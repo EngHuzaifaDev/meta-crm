@@ -4,22 +4,28 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AlertCircle, Clock, Loader2, LogOut, Play, Plus, ShieldAlert, Trash2, X } from "lucide-react";
 
-import {
-  getCredentialsAction,
-  addCredentialAction,
-  deleteCredentialAction,
-  clearSessionAction,
-  startTestLoginAction,
-  pollTestLoginAction,
-  resolve2FAAction,
-} from "@/server/instagram/actions";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  addCredentialAction,
+  clearSessionAction,
+  deleteCredentialAction,
+  getCredentialsAction,
+  pollTestLoginAction,
+  resolve2FAAction,
+  startTestLoginAction,
+} from "@/server/instagram/actions";
 
 interface SessionInfo {
   savedAt: Date | string;
@@ -59,7 +65,9 @@ export default function CredentialsPage() {
   const [submitting2FA, setSubmitting2FA] = useState(false);
   const [twoFAError, setTwoFAError] = useState<string | null>(null);
 
-  const [loginResult, setLoginResult] = useState<{ id: string; type: "success" | "error"; message: string } | null>(null);
+  const [loginResult, setLoginResult] = useState<{ id: string; type: "success" | "error"; message: string } | null>(
+    null,
+  );
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const testRunIdRef = useRef<string | null>(null);
 
@@ -68,7 +76,9 @@ export default function CredentialsPage() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const addCredential = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,12 +110,19 @@ export default function CredentialsPage() {
     setTestingId(id);
     setLoginResult(null);
     const { runId } = await startTestLoginAction(id);
-    if (!runId) { setTestingId(null); return; }
+    if (!runId) {
+      setTestingId(null);
+      return;
+    }
     testRunIdRef.current = runId;
 
     pollRef.current = setInterval(async () => {
       const state = await pollTestLoginAction(runId);
-      if (!state) { clearInterval(pollRef.current!); setTestingId(null); return; }
+      if (!state) {
+        clearInterval(pollRef.current!);
+        setTestingId(null);
+        return;
+      }
       const last = state.lastEvent;
       if (!last) return;
       if (last.type === "2fa_required") {
@@ -138,7 +155,10 @@ export default function CredentialsPage() {
       if (runId) {
         pollRef.current = setInterval(async () => {
           const state = await pollTestLoginAction(runId);
-          if (!state) { clearInterval(pollRef.current!); return; }
+          if (!state) {
+            clearInterval(pollRef.current!);
+            return;
+          }
           const last = state.lastEvent;
           if (!last) return;
           if (last.type === "done") {
@@ -213,9 +233,13 @@ export default function CredentialsPage() {
             </div>
             <Button type="submit" disabled={saving || !username.trim() || !password.trim()}>
               {saving ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                </>
               ) : (
-                <><Plus className="mr-2 h-4 w-4" /> Add Credential</>
+                <>
+                  <Plus className="mr-2 h-4 w-4" /> Add Credential
+                </>
               )}
             </Button>
           </form>
@@ -273,7 +297,12 @@ export default function CredentialsPage() {
                         )}
                       </Button>
                       {cred.session && (
-                        <Button variant="ghost" size="icon" onClick={() => clearSession(cred._id)} title="Clear session">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => clearSession(cred._id)}
+                          title="Clear session"
+                        >
                           <LogOut className="h-4 w-4" />
                         </Button>
                       )}
@@ -289,7 +318,12 @@ export default function CredentialsPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={show2FA} onOpenChange={(open) => { if (!open) setShow2FA(false); }}>
+      <Dialog
+        open={show2FA}
+        onOpenChange={(open) => {
+          if (!open) setShow2FA(false);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -312,9 +346,7 @@ export default function CredentialsPage() {
                 autoFocus
               />
             </div>
-            {twoFAError && (
-              <p className="text-sm text-destructive">{twoFAError}</p>
-            )}
+            {twoFAError && <p className="text-sm text-destructive">{twoFAError}</p>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShow2FA(false)} disabled={submitting2FA}>
@@ -322,7 +354,9 @@ export default function CredentialsPage() {
             </Button>
             <Button onClick={submit2FA} disabled={submitting2FA || !twoFACode.trim()}>
               {submitting2FA ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...</>
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying...
+                </>
               ) : (
                 "Submit"
               )}
