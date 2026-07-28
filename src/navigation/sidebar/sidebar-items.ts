@@ -50,7 +50,6 @@ export const sidebarItems: NavGroup[] = [
         title: "Cookie Extraction",
         url: "/dashboard/cookie-extraction",
         icon: Cookie,
-        requiredRole: 0,
       },
       {
         id: "followers",
