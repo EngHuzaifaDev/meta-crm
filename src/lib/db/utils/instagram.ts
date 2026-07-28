@@ -19,8 +19,28 @@ async function getFollowersCol(): Promise<Collection<InstagramFollowerRecord>> {
   if (!followersCol) {
     const db = await connectDb();
     followersCol = db.collection<InstagramFollowerRecord>("instagramFollowers");
+    await ensureFollowersIndexes(followersCol);
   }
   return followersCol;
+}
+
+async function ensureFollowersIndexes(col: Collection<InstagramFollowerRecord>): Promise<void> {
+  await col.createIndex(
+    { sourceProfileUsername: 1, followerUsername: 1 },
+    { unique: true, background: true },
+  );
+  await col.createIndex(
+    { sourceProfileUsername: 1, lastSeenAt: -1 },
+    { background: true },
+  );
+  await col.createIndex(
+    { lastSeenAt: -1 },
+    { background: true },
+  );
+  await col.createIndex(
+    { sourceProfileUsername: 1 },
+    { background: true },
+  );
 }
 
 export async function addTargetProfile(data: {
@@ -56,34 +76,14 @@ export async function upsertFollower(
   avatarUrl?: string,
 ): Promise<void> {
   const col = await getFollowersCol();
-  const existing = await col.findOne({
-    sourceProfileUsername,
-    followerUsername,
-  });
-
-  if (existing) {
-    await col.updateOne(
-      { _id: existing._id },
-      {
-        $set: {
-          lastSeenAt: new Date(),
-          followerDisplayName: displayName ?? existing.followerDisplayName,
-          followerAvatarUrl: avatarUrl ?? existing.followerAvatarUrl,
-        },
-        $inc: { appearanceCount: 1 },
-      },
-    );
-  } else {
-    await col.insertOne({
-      sourceProfileUsername,
-      followerUsername,
-      followerDisplayName: displayName,
-      followerAvatarUrl: avatarUrl,
-      firstSeenAt: new Date(),
-      lastSeenAt: new Date(),
-      appearanceCount: 1,
-    } as any);
-  }
+  const $set: Record<string, unknown> = { lastSeenAt: new Date() };
+  if (displayName !== undefined) $set.followerDisplayName = displayName;
+  if (avatarUrl !== undefined) $set.followerAvatarUrl = avatarUrl;
+  await col.updateOne(
+    { sourceProfileUsername, followerUsername },
+    { $set, $inc: { appearanceCount: 1 }, $setOnInsert: { firstSeenAt: new Date() } },
+    { upsert: true },
+  );
 }
 
 export async function getFollowersForProfile(profileUsername: string): Promise<InstagramFollowerRecord[]> {

@@ -29,7 +29,7 @@ export async function startCookieExtractionAction(cookiesJson: string, usernames
 
 export async function pollExtractionAction(runId: string) {
   const { getRunState } = await import("./progress-store");
-  const state = getRunState(runId);
+  const state = getRunState(runId, 50);
   if (!state) return { status: "not_found" as const, progress: [], lastEvent: null };
   return {
     status: state.status,
@@ -81,10 +81,18 @@ export async function getAllFollowersAction(sourceProfile?: string, page = 0, pa
 
 export async function exportFollowersCSVAction(sourceProfile?: string): Promise<string> {
   const { getAllFollowers } = await import("@/lib/db/utils/instagram");
-  const { followers } = await getAllFollowers(sourceProfile, 100000, 0);
-  const header = "username";
-  const rows = followers.map((f) => f.followerUsername);
-  return [header, ...rows].join("\n");
+  const batchSize = 5000;
+  const maxRows = 100000;
+  let rows: string[] = [];
+  let page = 0;
+  while (rows.length < maxRows) {
+    const { followers } = await getAllFollowers(sourceProfile, batchSize, page * batchSize);
+    if (followers.length === 0) break;
+    rows.push(...followers.map((f) => f.followerUsername));
+    page++;
+  }
+  if (rows.length > maxRows) rows = rows.slice(0, maxRows);
+  return ["username", ...rows].join("\n");
 }
 
 export async function getAllDistinctSourceProfilesAction(): Promise<string[]> {

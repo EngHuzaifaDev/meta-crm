@@ -83,3 +83,20 @@ Required (from `.env.example`):
 - **Theme system**: 4 presets (default, brutalist, soft-pop, tangerine), stored in cookies + localStorage, applied before hydration via `theme-boot.tsx`
 - Theme presets are generated from CSS files — run `npm run generate:presets` after editing presets
 - The project also contains a lead qualification AI pipeline (Groq SDK) — not typically impacted by Instagram work
+
+## Work State
+### Completed
+- **Branch flow**: `fix/build-time-issues` → `c-r-2` (fast-forward merged) → `fix/serialize-mongodb-objectid-for-client` (current)
+- `fix/build-time-issues`:
+  - `mongodb.ts`: removed top-level `await client.connect()`, lazy `connectDb()` + `dbPromise`
+  - `auth.ts`: `getAuth()` returns `any` (avoids incompatible Better Auth generic types)
+  - `instagram.ts`: lazy collection getters, types extracted to `types.ts`, `connect.ts` deleted
+  - `lib/db/utils/auth.ts` deleted (dead code), `user.ts`: lazy `getUsersCollection()`
+  - `compose.yml` / `compose.prod.yml`: selenium-network removed
+  - TypeScript: 0 errors was 19
+- `fix/serialize-mongodb-objectid-for-client` (current):
+  - `getAllFollowersAction`: maps MongoDB docs → plain objects (strips ObjectId `_id`, converts Date → ISO string)
+  - `followers/page.tsx`: `.map()` simplified since action pre-serializes
+
+### Active
+### Blocked
