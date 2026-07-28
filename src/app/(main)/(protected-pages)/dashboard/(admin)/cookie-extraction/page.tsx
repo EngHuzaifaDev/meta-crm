@@ -22,24 +22,56 @@ export default function CookieExtractionPage() {
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
+  const runIdRef = useRef<string | null>(null);
+
+  const clearPoll = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback((id: string) => {
+    let lastEventCount = 0;
+    pollRef.current = setInterval(async () => {
+      const state = await pollExtractionAction(id);
+      if (!state) {
+        clearPoll();
+        setRunning(false);
+        sessionStorage.removeItem("cookieExtractionRunId");
+        return;
+      }
+      if (state.progress.length > lastEventCount) {
+        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
+        lastEventCount = state.progress.length;
+        setEvents((p) => [...p, ...newEvents]);
+      }
+      if (state.status !== "running") {
+        clearPoll();
+        setRunning(false);
+        sessionStorage.removeItem("cookieExtractionRunId");
+      }
+    }, 1000);
+  }, [clearPoll]);
 
   useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events]);
-
-  const last = events[events.length - 1];
-  const done = last?.type === "done";
-
-  const totalFollowers = last?.totalFollowers ?? 0;
-  const totalEstimatedFollowers = last?.totalEstimatedFollowers ?? 0;
-  const invalidCount = last?.invalidCount ?? 0;
-  const privateCount = last?.privateCount ?? 0;
-  const duplicateCount = last?.duplicateCount ?? 0;
-  const processedCount = last?.processedCount ?? 0;
-  const totalCount = last?.totalCount ?? 0;
-  const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
-  const followerProgress =
-    totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
+    const saved = sessionStorage.getItem("cookieExtractionRunId");
+    if (!saved) return;
+    let cancelled = false;
+    (async () => {
+      const state = await pollExtractionAction(saved);
+      if (cancelled) return;
+      if (!state || state.status !== "running") {
+        sessionStorage.removeItem("cookieExtractionRunId");
+        return;
+      }
+      runIdRef.current = saved;
+      setEvents(state.progress as ProgressEvent[]);
+      setRunning(true);
+      startPolling(saved);
+    })();
+    return () => { cancelled = true; clearPoll(); };
+  }, [clearPoll, startPolling]);
 
   const startExtraction = async () => {
     setError(null);
@@ -89,26 +121,23 @@ export default function CookieExtractionPage() {
     }
 
     const runId = result.runId;
-
-    let lastEventCount = 0;
-    pollRef.current = setInterval(async () => {
-      const state = await pollExtractionAction(runId);
-      if (!state) {
-        clearInterval(pollRef.current!);
-        setRunning(false);
-        return;
-      }
-      if (state.progress.length > lastEventCount) {
-        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
-        lastEventCount = state.progress.length;
-        setEvents((p) => [...p, ...newEvents]);
-      }
-      if (state.status !== "running") {
-        clearInterval(pollRef.current!);
-        setRunning(false);
-      }
-    }, 1000);
+    runIdRef.current = runId;
+    sessionStorage.setItem("cookieExtractionRunId", runId);
+    startPolling(runId);
   };
+
+  const last = events[events.length - 1];
+  const done = last?.type === "done";
+  const totalFollowers = last?.totalFollowers ?? 0;
+  const totalEstimatedFollowers = last?.totalEstimatedFollowers ?? 0;
+  const invalidCount = last?.invalidCount ?? 0;
+  const privateCount = last?.privateCount ?? 0;
+  const duplicateCount = last?.duplicateCount ?? 0;
+  const processedCount = last?.processedCount ?? 0;
+  const totalCount = last?.totalCount ?? 0;
+  const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
+  const followerProgress =
+    totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
 
   return (
     <div className="space-y-6 p-6">
