@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
   exportFollowersCSVAction,
+  exportFollowersCSVChunkAction,
   getScrapedSourcesAction,
   pollExtractionAction,
   startCookieExtractionAction,
@@ -179,14 +180,19 @@ export default function CookieExtractionPage() {
   };
 
   const handleExportCSV = async () => {
-    const csv = await exportFollowersCSVAction();
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "followers.csv";
-    a.click();
-    URL.revokeObjectURL(url);
+    const { total } = await exportFollowersCSVAction();
+    const chunkSize = 50000;
+    const totalPages = Math.ceil(total / chunkSize);
+    for (let page = 0; page < totalPages; page++) {
+      const { csv } = await exportFollowersCSVChunkAction(undefined, page, chunkSize);
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `followers-part-${page + 1}-of-${totalPages}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleExtractSource = (username: string) => {

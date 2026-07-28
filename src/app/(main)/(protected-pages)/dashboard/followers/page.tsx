@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   exportFollowersCSVAction,
+  exportFollowersCSVChunkAction,
   getAllDistinctSourceProfilesAction,
   getAllFollowersAction,
 } from "@/server/instagram/actions";
@@ -59,14 +60,20 @@ export default function FollowersPage() {
 
   const handleExport = async () => {
     const src = filterProfile === "all" ? undefined : filterProfile;
-    const csv = await exportFollowersCSVAction(src);
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `followers${src ? `-${src}` : ""}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const { total } = await exportFollowersCSVAction(src);
+    const chunkSize = 50000;
+    const totalPages = Math.ceil(total / chunkSize);
+    const baseName = `followers${src ? `-${src}` : ""}`;
+    for (let page = 0; page < totalPages; page++) {
+      const { csv } = await exportFollowersCSVChunkAction(src, page, chunkSize);
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${baseName}-part-${page + 1}-of-${totalPages}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const filtered = followers.filter((f) =>

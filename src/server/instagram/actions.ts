@@ -79,20 +79,22 @@ export async function getAllFollowersAction(sourceProfile?: string, page = 0, pa
   };
 }
 
-export async function exportFollowersCSVAction(sourceProfile?: string): Promise<string> {
+export async function exportFollowersCSVAction(sourceProfile?: string): Promise<{ total: number }> {
   const { getAllFollowers } = await import("@/lib/db/utils/instagram");
-  const batchSize = 5000;
-  const maxRows = 100000;
-  let rows: string[] = [];
-  let page = 0;
-  while (rows.length < maxRows) {
-    const { followers } = await getAllFollowers(sourceProfile, batchSize, page * batchSize);
-    if (followers.length === 0) break;
-    rows.push(...followers.map((f) => f.followerUsername));
-    page++;
-  }
-  if (rows.length > maxRows) rows = rows.slice(0, maxRows);
-  return ["username", ...rows].join("\n");
+  const { total } = await getAllFollowers(sourceProfile, 1, 0);
+  return { total };
+}
+
+export async function exportFollowersCSVChunkAction(
+  sourceProfile?: string,
+  page = 0,
+  chunkSize = 50000,
+): Promise<{ csv: string; page: number; isLast: boolean }> {
+  const { getAllFollowers } = await import("@/lib/db/utils/instagram");
+  const { followers, total } = await getAllFollowers(sourceProfile, chunkSize, page * chunkSize);
+  const rows = followers.map((f) => f.followerUsername);
+  const csv = page === 0 ? ["username", ...rows].join("\n") : rows.join("\n");
+  return { csv, page, isLast: page * chunkSize + followers.length >= total };
 }
 
 export async function getAllDistinctSourceProfilesAction(): Promise<string[]> {
