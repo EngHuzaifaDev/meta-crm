@@ -284,14 +284,32 @@ export async function checkScrapedSourcesAction(usernames: string[]) {
   return statuses as Record<string, "scraped" | "private" | "invalid" | null>;
 }
 
-export async function getScrapedSourcesAction() {
+export async function getScrapedSourcesAction(limit = 10) {
   const { getScrapedSources, countScrapedSources } = await import("@/lib/db/utils/instagram");
-  const [sources, total] = await Promise.all([getScrapedSources(10), countScrapedSources()]);
-  return { sources, hasMore: total > 10, total };
+  const [sources, total] = await Promise.all([getScrapedSources(limit), countScrapedSources()]);
+  return { sources, hasMore: total > limit, total };
 }
 
 export async function getProfileFollowersAction(profileUsername: string): Promise<string[]> {
   const { getFollowersForProfile } = await import("@/lib/db/utils/instagram");
   const records = await getFollowersForProfile(profileUsername);
   return records.map((r) => r.followerUsername);
+}
+
+export async function getAllFollowersAction(sourceProfile?: string, page = 0, pageSize = 100) {
+  const { getAllFollowers } = await import("@/lib/db/utils/instagram");
+  return getAllFollowers(sourceProfile, pageSize, page * pageSize);
+}
+
+export async function exportFollowersCSVAction(sourceProfile?: string): Promise<string> {
+  const { getAllFollowers } = await import("@/lib/db/utils/instagram");
+  const { followers } = await getAllFollowers(sourceProfile, 100000, 0);
+  const header = "username";
+  const rows = followers.map((f) => f.followerUsername);
+  return [header, ...rows].join("\n");
+}
+
+export async function getAllDistinctSourceProfilesAction(): Promise<string[]> {
+  const { getAllDistinctSourceProfiles } = await import("@/lib/db/utils/instagram");
+  return getAllDistinctSourceProfiles();
 }

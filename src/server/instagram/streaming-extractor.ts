@@ -17,8 +17,8 @@ import {
   extractSessionCookies,
 } from "./graphql-extractor";
 import { loginToInstagram } from "./login";
-import { getProxyUrl, verifyProxyIP } from "./proxy-helper"
 import { getRunState } from "./progress-store";
+import { getProxyUrl, verifyProxyIP } from "./proxy-helper";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
 import path from "node:path";
@@ -36,7 +36,17 @@ function randomDelay(): Promise<void> {
 }
 
 export interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "stopped" | "2fa_required";
+  type:
+    | "status"
+    | "follower"
+    | "invalid"
+    | "duplicate"
+    | "skipped"
+    | "private"
+    | "done"
+    | "error"
+    | "stopped"
+    | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -532,7 +542,12 @@ export async function extractFollowersStreamFromCookies(
         const existingFollowers = await getExistingFollowerUsernames(targetUsername);
 
         const result = await extractFollowersFromCookies(
-          { headers, sessionCookies: session, maxPages: options.maxPages, signal: () => getRunState(options.runId)?.status === "stopped" },
+          {
+            headers,
+            sessionCookies: session,
+            maxPages: options.maxPages,
+            signal: () => getRunState(options.runId)?.status === "stopped",
+          },
           targetUsername,
           async (gqlEvent) => {
             if (gqlEvent.page === 1 && gqlEvent.estimatedTotal > 0) {

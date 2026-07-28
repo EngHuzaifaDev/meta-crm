@@ -283,3 +283,20 @@ export async function updateTargetProfileScraped(
     { upsert: true },
   );
 }
+
+export async function getAllFollowers(
+  sourceProfile?: string,
+  limit = 500,
+  skip = 0,
+): Promise<{ followers: InstagramFollowerRecord[]; total: number }> {
+  const filter = sourceProfile ? { sourceProfileUsername: sourceProfile } : {};
+  const [followers, total] = await Promise.all([
+    followersCol.find(filter).sort({ lastSeenAt: -1 }).skip(skip).limit(limit).toArray(),
+    followersCol.countDocuments(filter),
+  ]);
+  return { followers, total };
+}
+
+export async function getAllDistinctSourceProfiles(): Promise<string[]> {
+  return followersCol.distinct("sourceProfileUsername");
+}

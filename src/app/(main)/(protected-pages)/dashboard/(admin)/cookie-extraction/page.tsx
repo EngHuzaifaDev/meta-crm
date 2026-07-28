@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { AlertCircle, Ban, Bug, CheckCircle, ClipboardPaste, Loader2, Lock, Play, Terminal, Users } from "lucide-react";
+import {
+  AlertCircle,
+  Ban,
+  Bug,
+  CheckCircle,
+  ClipboardPaste,
+  Download,
+  Loader2,
+  Play,
+  Terminal,
+  Users,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,8 +21,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { pollExtractionAction, startCookieExtractionAction, stopExtractionAction } from "@/server/instagram/actions";
+import {
+  exportFollowersCSVAction,
+  getScrapedSourcesAction,
+  pollExtractionAction,
+  startCookieExtractionAction,
+  stopExtractionAction,
+} from "@/server/instagram/actions";
 import type { ProgressEvent } from "@/server/instagram/streaming-extractor";
+
+interface ScrapedSource {
+  profileUsername: string;
+  followerCount: number;
+  profilePicUrl?: string;
+  isPrivate?: boolean;
+  isInvalid?: boolean;
+}
+
+const STORAGE_KEY = "cookieExtractionRunId";
 
 export default function CookieExtractionPage() {
   const [cookiesJson, setCookiesJson] = useState("");
@@ -20,9 +47,18 @@ export default function CookieExtractionPage() {
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showStopModal, setShowStopModal] = useState(false);
+  const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
   const runIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    getScrapedSourcesAction(50)
+      .then((res) => setScrapedSources(res.sources))
+      .catch(() => {});
+  }, []);
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -31,38 +67,45 @@ export default function CookieExtractionPage() {
     }
   }, []);
 
-  const startPolling = useCallback((id: string) => {
-    let lastEventCount = 0;
-    pollRef.current = setInterval(async () => {
-      const state = await pollExtractionAction(id);
-      if (!state) {
-        clearPoll();
-        setRunning(false);
-        sessionStorage.removeItem("cookieExtractionRunId");
-        return;
-      }
-      if (state.progress.length > lastEventCount) {
-        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
-        lastEventCount = state.progress.length;
-        setEvents((p) => [...p, ...newEvents]);
-      }
-      if (state.status !== "running") {
-        clearPoll();
-        setRunning(false);
-        sessionStorage.removeItem("cookieExtractionRunId");
-      }
-    }, 1000);
-  }, [clearPoll]);
+  const startPolling = useCallback(
+    (id: string) => {
+      let lastEventCount = 0;
+      pollRef.current = setInterval(async () => {
+        const state = await pollExtractionAction(id);
+        if (!state) {
+          clearPoll();
+          setRunning(false);
+          sessionStorage.removeItem(STORAGE_KEY);
+          return;
+        }
+        if (state.progress.length > lastEventCount) {
+          const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
+          lastEventCount = state.progress.length;
+          setEvents((p) => [...p, ...newEvents]);
+        }
+        if (state.status !== "running") {
+          clearPoll();
+          setRunning(false);
+          sessionStorage.removeItem(STORAGE_KEY);
+        }
+      }, 1000);
+    },
+    [clearPoll],
+  );
 
   useEffect(() => {
-    const saved = sessionStorage.getItem("cookieExtractionRunId");
+    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [events]);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem(STORAGE_KEY);
     if (!saved) return;
     let cancelled = false;
     (async () => {
       const state = await pollExtractionAction(saved);
       if (cancelled) return;
       if (!state || state.status !== "running") {
-        sessionStorage.removeItem("cookieExtractionRunId");
+        sessionStorage.removeItem(STORAGE_KEY);
         return;
       }
       runIdRef.current = saved;
@@ -70,7 +113,10 @@ export default function CookieExtractionPage() {
       setRunning(true);
       startPolling(saved);
     })();
-    return () => { cancelled = true; clearPoll(); };
+    return () => {
+      cancelled = true;
+      clearPoll();
+    };
   }, [clearPoll, startPolling]);
 
   const startExtraction = async () => {
@@ -100,30 +146,58 @@ export default function CookieExtractionPage() {
       return;
     }
 
-    const targetNames = names;
     if (testMode) {
       setEvents([
         {
           type: "status",
-          message: `TEST MODE — fetching 2 pages per profile (${targetNames.length} profiles total)`,
-          totalCount: targetNames.length,
-        },
+          message: `TEST MODE — fetching 2 pages per profile (${names.length} profiles total)`,
+          totalCount: names.length,
+        } as ProgressEvent,
       ]);
     }
 
     setRunning(true);
 
-    const result = await startCookieExtractionAction(cookiesJson.trim(), targetNames, testMode ? 2 : undefined);
+    const result = await startCookieExtractionAction(cookiesJson.trim(), names, testMode ? 2 : undefined);
     if ("error" in result) {
       setError(result.error as string);
       setRunning(false);
       return;
     }
 
-    const runId = result.runId;
-    runIdRef.current = runId;
-    sessionStorage.setItem("cookieExtractionRunId", runId);
-    startPolling(runId);
+    runIdRef.current = result.runId;
+    sessionStorage.setItem(STORAGE_KEY, result.runId);
+    startPolling(result.runId);
+  };
+
+  const handleStop = async () => {
+    if (runIdRef.current) {
+      await stopExtractionAction(runIdRef.current);
+    }
+    sessionStorage.removeItem(STORAGE_KEY);
+    setShowStopModal(false);
+  };
+
+  const handleExportCSV = async () => {
+    const csv = await exportFollowersCSVAction();
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "followers.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExtractSource = (username: string) => {
+    setUsernames((prev) => {
+      const lines = prev
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (lines.includes(username)) return prev;
+      return [...lines, username].join("\n");
+    });
   };
 
   const last = events[events.length - 1];
@@ -138,6 +212,8 @@ export default function CookieExtractionPage() {
   const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
   const followerProgress =
     totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
+
+  const sessionReqCount = events.filter((e) => e.type === "follower").length;
 
   return (
     <div className="space-y-6 p-6">
@@ -179,6 +255,27 @@ export default function CookieExtractionPage() {
             />
           </div>
 
+          {/* Previously scraped sources */}
+          {scrapedSources.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-muted-foreground font-medium">Previously extracted — click to add</p>
+              <div className="flex flex-wrap gap-1.5">
+                {scrapedSources.map((s) => (
+                  <button
+                    key={s.profileUsername}
+                    type="button"
+                    disabled={running || s.isPrivate || s.isInvalid}
+                    onClick={() => handleExtractSource(s.profileUsername)}
+                    className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs hover:bg-muted transition-colors disabled:opacity-40"
+                  >
+                    @{s.profileUsername}
+                    <span className="text-muted-foreground">({s.followerCount})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-2">
             <Checkbox
               id="test-mode"
@@ -188,41 +285,62 @@ export default function CookieExtractionPage() {
             />
             <Label htmlFor="test-mode" className="flex items-center gap-1.5 cursor-pointer">
               <Bug className="h-3.5 w-3.5" />
-              Test mode — fetch 2 pages per profile (quick check)
+              Test mode — 2 pages per profile
             </Label>
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <Button onClick={startExtraction} disabled={running}>
-            {running ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Extracting...
-              </>
-            ) : (
-              <>
-                <Play className="mr-2 h-4 w-4" />
-                {testMode ? "Run Test" : "Start Extraction"}
-              </>
-            )}
-          </Button>
-          {running && (
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (runIdRef.current) {
-                  await stopExtractionAction(runIdRef.current);
-                }
-              }}
-            >
-              <Ban className="mr-2 h-4 w-4" />
-              Stop
+          <div className="flex gap-2">
+            <Button onClick={startExtraction} disabled={running}>
+              {running ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Extracting...
+                </>
+              ) : (
+                <>
+                  <Play className="mr-2 h-4 w-4" />
+                  {testMode ? "Run Test" : "Start Extraction"}
+                </>
+              )}
             </Button>
-          )}
+            {running && (
+              <Button variant="destructive" onClick={() => setShowStopModal(true)}>
+                <Ban className="mr-2 h-4 w-4" />
+                Stop
+              </Button>
+            )}
+            {!running && totalFollowers > 0 && (
+              <Button variant="outline" onClick={handleExportCSV}>
+                <Download className="mr-2 h-4 w-4" />
+                Export CSV
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 
+      {/* Session Progress */}
+      {running && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Terminal className="h-4 w-4" />
+              Session Progress
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="text-muted-foreground">Requests made:</span>
+              <Badge variant="secondary">{sessionReqCount}</Badge>
+              {last?.message && <span className="text-muted-foreground text-xs truncate">{last.message}</span>}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Events */}
       {events.length > 0 && (
         <Card>
           <CardHeader>
@@ -273,18 +391,13 @@ export default function CookieExtractionPage() {
                 {totalFollowers} followers
               </Badge>
               <Badge variant="outline" className="gap-1 border-amber-300 text-amber-600 text-sm">
-                <Ban className="h-3.5 w-3.5" />
+                <AlertCircle className="h-3.5 w-3.5" />
                 {invalidCount} invalid
               </Badge>
-              <Badge
-                variant="outline"
-                className="gap-1 border-violet-300 text-sm text-violet-600 dark:border-violet-800 dark:text-violet-400"
-              >
-                <Lock className="h-3.5 w-3.5" />
+              <Badge variant="outline" className="gap-1 border-violet-300 text-sm text-violet-600">
                 {privateCount} private
               </Badge>
               <Badge variant="outline" className="gap-1 text-muted-foreground text-sm">
-                <AlertCircle className="h-3.5 w-3.5" />
                 {duplicateCount} duplicates
               </Badge>
               {done && (
@@ -301,17 +414,17 @@ export default function CookieExtractionPage() {
                   <span className="shrink-0 w-6 opacity-50">{i + 1}</span>
                   <span
                     className={
-                    ev.type === "error"
-                      ? "text-destructive"
-                      : ev.type === "done"
-                        ? "text-green-500"
-                        : ev.type === "stopped"
-                          ? "text-orange-500"
-                          : ev.type === "invalid"
-                            ? "text-amber-500"
-                            : ev.type === "follower"
-                              ? "text-blue-400"
-                              : ""
+                      ev.type === "error"
+                        ? "text-destructive"
+                        : ev.type === "done"
+                          ? "text-green-500"
+                          : ev.type === "stopped"
+                            ? "text-orange-500"
+                            : ev.type === "invalid"
+                              ? "text-amber-500"
+                              : ev.type === "follower"
+                                ? "text-blue-400"
+                                : ""
                     }
                   >
                     {ev.type === "follower" ? `+ ${ev.followerUsername}` : ev.message || ev.error || ""}
@@ -322,6 +435,31 @@ export default function CookieExtractionPage() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Stop Confirmation Modal */}
+      {showStopModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <Card className="w-full max-w-sm mx-4">
+            <CardHeader>
+              <CardTitle className="text-lg">Stop Extraction?</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                The current page will finish, then extraction stops gracefully. Cursor will be saved so you can resume
+                later.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowStopModal(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={handleStop}>
+                  Stop
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );
