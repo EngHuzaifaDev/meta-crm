@@ -48,7 +48,7 @@ interface ScrapedProfile {
 interface SessionStatus {
   label: string;
   requestCount: number;
-  maxPerHour: number
+  maxPerHour: number;
   softLimit: number;
   coolingDown: boolean;
   cooldownRemainingMs: number;
@@ -93,16 +93,6 @@ export default function MultiSessionExtractionPage() {
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
   const runIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events]);
-
-  useEffect(() => {
-    getScrapedSourcesAction(50)
-      .then((res) => setScrapedProfiles(res.sources))
-      .catch(() => {});
-  }, []);
-
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
@@ -118,6 +108,7 @@ export default function MultiSessionExtractionPage() {
         if (!state) {
           clearPoll();
           setRunning(false);
+          sessionStorage.removeItem("multiSessionRunId");
           return;
         }
         if (state.progress.length > lastEventCount) {
@@ -133,11 +124,49 @@ export default function MultiSessionExtractionPage() {
         if (state.status !== "running") {
           clearPoll();
           setRunning(false);
+          sessionStorage.removeItem("multiSessionRunId");
         }
       }, 1000);
     },
     [clearPoll],
   );
+
+  useEffect(() => {
+    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [events]);
+
+  useEffect(() => {
+    getScrapedSourcesAction(50)
+      .then((res) => setScrapedProfiles(res.sources))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const saved = sessionStorage.getItem("multiSessionRunId");
+    if (!saved) return;
+    let cancelled = false;
+    (async () => {
+      const state = await pollExtractionAction(saved);
+      if (cancelled) return;
+      if (!state || state.status !== "running") {
+        sessionStorage.removeItem("multiSessionRunId");
+        return;
+      }
+      runIdRef.current = saved;
+      setEvents(state.progress as ExtractionEvent[]);
+      for (const ev of state.progress as ExtractionEvent[]) {
+        if (ev.type === "sessionsUpdate" && ev.sessions) {
+          setSessionStatuses(ev.sessions);
+        }
+      }
+      setRunning(true);
+      startPolling(saved);
+    })();
+    return () => {
+      cancelled = true;
+      clearPoll();
+    };
+  }, [clearPoll, startPolling]);
 
   const addSession = () => {
     setSessionError(null);
@@ -212,6 +241,7 @@ export default function MultiSessionExtractionPage() {
     }
 
     runIdRef.current = result.runId;
+    sessionStorage.setItem("multiSessionRunId", result.runId);
     startPolling(result.runId);
   };
 
@@ -219,6 +249,7 @@ export default function MultiSessionExtractionPage() {
     if (runIdRef.current) {
       await stopExtractionAction(runIdRef.current);
     }
+    sessionStorage.removeItem("multiSessionRunId");
     setShowStopModal(false);
   };
 
