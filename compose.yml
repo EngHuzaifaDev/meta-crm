@@ -7,7 +7,6 @@ services:
     ports:
       - "3003:3003"
     env_file:
-      - .env
       - .env.local
     environment:
       - PORT=3003
