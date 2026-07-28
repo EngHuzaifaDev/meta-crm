@@ -17,7 +17,8 @@ import {
   extractSessionCookies,
 } from "./graphql-extractor";
 import { loginToInstagram } from "./login";
-import { getProxyUrl, verifyProxyIP } from "./proxy-helper";
+import { getProxyUrl, verifyProxyIP } from "./proxy-helper"
+import { getRunState } from "./progress-store";
 import { ScrapingEngine } from "./scraping-engine";
 import type { VariableContext } from "./types";
 import path from "node:path";
@@ -35,7 +36,7 @@ function randomDelay(): Promise<void> {
 }
 
 export interface ProgressEvent {
-  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "2fa_required";
+  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "stopped" | "2fa_required";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;
@@ -426,6 +427,7 @@ export interface CookieStreamOptions {
   cookies: CookieObject[];
   usernames: string[];
   maxPages?: number;
+  runId: string;
 }
 
 export async function extractFollowersStreamFromCookies(
@@ -485,6 +487,21 @@ export async function extractFollowersStreamFromCookies(
     });
 
     for (let i = 0; i < options.usernames.length; i++) {
+      if (getRunState(options.runId)?.status === "stopped") {
+        await onProgress({
+          type: "stopped",
+          message: "Extraction stopped by user",
+          totalFollowers,
+          totalEstimatedFollowers,
+          invalidCount,
+          privateCount,
+          duplicateCount,
+          processedCount,
+          totalCount,
+        });
+        return;
+      }
+
       const targetUsername = options.usernames[i];
       processedCount = i + 1;
 
@@ -515,7 +532,7 @@ export async function extractFollowersStreamFromCookies(
         const existingFollowers = await getExistingFollowerUsernames(targetUsername);
 
         const result = await extractFollowersFromCookies(
-          { headers, sessionCookies: session, maxPages: options.maxPages },
+          { headers, sessionCookies: session, maxPages: options.maxPages, signal: () => getRunState(options.runId)?.status === "stopped" },
           targetUsername,
           async (gqlEvent) => {
             if (gqlEvent.page === 1 && gqlEvent.estimatedTotal > 0) {
@@ -590,6 +607,21 @@ export async function extractFollowersStreamFromCookies(
         });
       } catch (err: any) {
         const msg = err.message || "";
+
+        if (msg === "STOPPED") {
+          await onProgress({
+            type: "stopped",
+            message: "Extraction stopped by user",
+            totalFollowers,
+            totalEstimatedFollowers,
+            invalidCount,
+            privateCount,
+            duplicateCount,
+            processedCount,
+            totalCount,
+          });
+          return;
+        }
 
         if (msg.includes("SESSION_EXPIRED")) {
           await onProgress({

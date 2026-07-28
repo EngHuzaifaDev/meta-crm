@@ -251,7 +251,7 @@ export async function startCookieExtractionAction(cookiesJson: string, usernames
 
   const runId = createRun();
 
-  extractFollowersStreamFromCookies({ cookies, usernames, maxPages }, (event) => pushEvent(runId, event));
+  extractFollowersStreamFromCookies({ cookies, usernames, maxPages, runId }, (event) => pushEvent(runId, event));
 
   return { runId };
 }

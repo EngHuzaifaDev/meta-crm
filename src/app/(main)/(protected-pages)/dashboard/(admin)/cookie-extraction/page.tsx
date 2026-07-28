@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { pollExtractionAction, startCookieExtractionAction } from "@/server/instagram/actions";
+import { pollExtractionAction, startCookieExtractionAction, stopExtractionAction } from "@/server/instagram/actions";
 import type { ProgressEvent } from "@/server/instagram/streaming-extractor";
 
 export default function CookieExtractionPage() {
@@ -207,6 +207,19 @@ export default function CookieExtractionPage() {
               </>
             )}
           </Button>
+          {running && (
+            <Button
+              variant="destructive"
+              onClick={async () => {
+                if (runIdRef.current) {
+                  await stopExtractionAction(runIdRef.current);
+                }
+              }}
+            >
+              <Ban className="mr-2 h-4 w-4" />
+              Stop
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -288,10 +301,12 @@ export default function CookieExtractionPage() {
                   <span className="shrink-0 w-6 opacity-50">{i + 1}</span>
                   <span
                     className={
-                      ev.type === "error"
-                        ? "text-destructive"
-                        : ev.type === "done"
-                          ? "text-green-500"
+                    ev.type === "error"
+                      ? "text-destructive"
+                      : ev.type === "done"
+                        ? "text-green-500"
+                        : ev.type === "stopped"
+                          ? "text-orange-500"
                           : ev.type === "invalid"
                             ? "text-amber-500"
                             : ev.type === "follower"

@@ -240,6 +240,7 @@ export interface CookieBasedOptions {
   headers: Record<string, string>;
   sessionCookies: SessionCookies;
   maxPages?: number;
+  signal?: () => boolean;
 }
 
 export interface GraphQLStreamOptions {
@@ -343,6 +344,8 @@ export async function extractFollowersFromCookies(
   const avatarUrls = new Map<string, string>();
 
   while (requestCount < MAX_REQUESTS_PER_SESSION) {
+    if (options.signal?.()) throw new Error("STOPPED");
+
     let result: GraphQLPageResult;
 
     try {
