@@ -61,17 +61,25 @@ export async function extractWithSessionRotation(
 ): Promise<void> {
   const tracked = createTrackedSessions(options.sessions);
   let totalFollowers = 0;
-  const totalEstimatedFollowers = 0;
+  let totalEstimatedFollowers = 0;
   let invalidCount = 0;
   let privateCount = 0;
   let duplicateCount = 0;
   let processedCount = 0;
   const totalCount = options.usernames.length;
 
-  const emitSessions = () =>
+  const emitSessions = (extra?: Partial<SessionExtractionEvent>) =>
     onProgress({
-      type: "sessionsUpdate",
+      type: "sessionsUpdate" as const,
       sessions: getSessionsSnapshot(tracked),
+      totalFollowers,
+      totalEstimatedFollowers,
+      invalidCount,
+      privateCount,
+      duplicateCount,
+      processedCount,
+      totalCount,
+      ...extra,
     });
 
   const isStopped = () => getRunState(options.runId)?.status === "stopped";
@@ -249,6 +257,10 @@ export async function extractWithSessionRotation(
             result = await fetchFollowersPageFromCookies(profileUserId, session.headers, cursor);
             markSessionUsed(session);
 
+            if (result.estimatedTotal > 0 && totalEstimatedFollowers === 0) {
+              totalEstimatedFollowers = result.estimatedTotal;
+            }
+
             for (const entry of result.usernames) {
               totalFollowers++;
               extractedCount++;
@@ -298,6 +310,10 @@ export async function extractWithSessionRotation(
 
           result = await fetchFollowersPageFromCookies(profileUserId, session.headers, cursor);
           markSessionUsed(session);
+
+          if (result.estimatedTotal > 0 && totalEstimatedFollowers === 0) {
+            totalEstimatedFollowers = result.estimatedTotal;
+          }
 
           for (const entry of result.usernames) {
             totalFollowers++;
