@@ -12,7 +12,6 @@ services:
     environment:
       - PORT=3003
       - WATCHPACK_POLLING=true
-      - SELENIUM_GRID_URL=http://selenium-hub:4444
     volumes:
       - .:/app
       - /app/node_modules
