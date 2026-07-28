@@ -2,8 +2,6 @@ import type { ReactNode } from "react";
 
 import type { Metadata } from "next";
 
-export const dynamic = "force-dynamic";
-
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { APP_CONFIG } from "@/config/app-config";
