@@ -7,22 +7,14 @@ if (!uri) {
   throw new Error("MONGODB_URI is not defined");
 }
 
-let client: MongoClient;
-let _db: Db;
+let clientPromise: Promise<MongoClient> | null = null;
+let dbPromise: Promise<Db> | null = null;
 
-declare global {
-  // eslint-disable-next-line no-var
-  var _mongoClient: MongoClient | undefined;
+export async function connectDb(): Promise<Db> {
+  if (dbPromise) return dbPromise; // biome-ignore lint/nursery/noMisusedPromises: checking truthiness of promise ref, not value
+  if (!clientPromise) {
+    clientPromise = new MongoClient(uri).connect();
+  }
+  dbPromise = clientPromise.then((c) => c.db(dbName));
+  return dbPromise;
 }
-
-if (!global._mongoClient) {
-  client = new MongoClient(uri);
-  await client.connect();
-  global._mongoClient = client;
-} else {
-  client = global._mongoClient;
-}
-
-const mongodbInstance = client.db(dbName);
-
-export { mongodbInstance };

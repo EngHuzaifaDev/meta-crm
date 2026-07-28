@@ -40,7 +40,7 @@ export default function FollowersPage() {
       res.followers.map((f) => ({
         followerUsername: f.followerUsername,
         sourceProfileUsername: f.sourceProfileUsername,
-        lastSeenAt: f.lastSeenAt instanceof Date ? f.lastSeenAt.toISOString() : String(f.lastSeenAt),
+        lastSeenAt: f.lastSeenAt,
       })),
     );
     setTotal(res.total);

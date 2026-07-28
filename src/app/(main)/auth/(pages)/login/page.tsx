@@ -6,12 +6,12 @@ import { redirect } from "next/navigation";
 
 import { Command } from "lucide-react";
 
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 
 import { LoginForm } from "../../_components/login-form";
 
 export default async function LoginV1() {
-  // Check if the user is already authenticated
+  const auth = await getAuth();
   const session = await auth.api.getSession({
     headers: await headers(),
   });

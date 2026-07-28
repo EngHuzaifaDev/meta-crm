@@ -1,36 +1,33 @@
-import { mongodbInstance } from "@/lib/db/mongodb";
+import type { Collection } from "mongodb";
 
-export interface InstagramTargetProfile {
-  _id?: string;
-  addedByUserId: string;
-  profileUsername: string;
-  lastScrapedAt?: Date;
-  followerCount?: number;
-  profilePicUrl?: string;
-  isPrivate?: boolean;
-  isInvalid?: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+import { connectDb } from "@/lib/db/mongodb";
+
+import type { InstagramFollowerRecord, InstagramTargetProfile } from "./types";
+
+let targetProfilesCol: Collection<InstagramTargetProfile> | null = null;
+let followersCol: Collection<InstagramFollowerRecord> | null = null;
+
+async function getTargetProfilesCol(): Promise<Collection<InstagramTargetProfile>> {
+  if (!targetProfilesCol) {
+    const db = await connectDb();
+    targetProfilesCol = db.collection<InstagramTargetProfile>("instagramTargetProfiles");
+  }
+  return targetProfilesCol;
 }
 
-export interface InstagramFollowerRecord {
-  _id?: string;
-  sourceProfileUsername: string;
-  followerUsername: string;
-  followerDisplayName?: string;
-  followerAvatarUrl?: string;
-  firstSeenAt: Date;
-  lastSeenAt: Date;
-  appearanceCount: number;
+async function getFollowersCol(): Promise<Collection<InstagramFollowerRecord>> {
+  if (!followersCol) {
+    const db = await connectDb();
+    followersCol = db.collection<InstagramFollowerRecord>("instagramFollowers");
+  }
+  return followersCol;
 }
-
-const targetProfilesCol = mongodbInstance.collection<InstagramTargetProfile>("instagramTargetProfiles");
-const followersCol = mongodbInstance.collection<InstagramFollowerRecord>("instagramFollowers");
 
 export async function addTargetProfile(data: {
   addedByUserId: string;
   profileUsername: string;
 }): Promise<InstagramTargetProfile> {
+  const col = await getTargetProfilesCol();
   const now = new Date();
   const doc = {
     addedByUserId: data.addedByUserId,
@@ -38,16 +35,18 @@ export async function addTargetProfile(data: {
     createdAt: now,
     updatedAt: now,
   };
-  const result = await targetProfilesCol.insertOne(doc as any);
+  const result = await col.insertOne(doc as any);
   return { ...doc, _id: String(result.insertedId) } as InstagramTargetProfile;
 }
 
 export async function getTargetProfiles(): Promise<InstagramTargetProfile[]> {
-  return targetProfilesCol.find({}).sort({ createdAt: -1 }).toArray();
+  const col = await getTargetProfilesCol();
+  return col.find({}).sort({ createdAt: -1 }).toArray();
 }
 
 export async function getTargetProfilesByUser(userId: string): Promise<InstagramTargetProfile[]> {
-  return targetProfilesCol.find({ addedByUserId: userId }).sort({ createdAt: -1 }).toArray();
+  const col = await getTargetProfilesCol();
+  return col.find({ addedByUserId: userId }).sort({ createdAt: -1 }).toArray();
 }
 
 export async function upsertFollower(
@@ -56,13 +55,14 @@ export async function upsertFollower(
   displayName?: string,
   avatarUrl?: string,
 ): Promise<void> {
-  const existing = await followersCol.findOne({
+  const col = await getFollowersCol();
+  const existing = await col.findOne({
     sourceProfileUsername,
     followerUsername,
   });
 
   if (existing) {
-    await followersCol.updateOne(
+    await col.updateOne(
       { _id: existing._id },
       {
         $set: {
@@ -74,7 +74,7 @@ export async function upsertFollower(
       },
     );
   } else {
-    await followersCol.insertOne({
+    await col.insertOne({
       sourceProfileUsername,
       followerUsername,
       followerDisplayName: displayName,
@@ -87,18 +87,24 @@ export async function upsertFollower(
 }
 
 export async function getFollowersForProfile(profileUsername: string): Promise<InstagramFollowerRecord[]> {
-  return followersCol.find({ sourceProfileUsername: profileUsername }).sort({ appearanceCount: -1 }).toArray();
+  const col = await getFollowersCol();
+  return col.find({ sourceProfileUsername: profileUsername }).sort({ appearanceCount: -1 }).toArray();
 }
 
 export async function getExistingFollowerUsernames(sourceProfileUsername: string): Promise<Set<string>> {
-  const docs = await followersCol.find({ sourceProfileUsername }, { projection: { followerUsername: 1 } }).toArray();
+  const col = await getFollowersCol();
+  const docs = await col.find({ sourceProfileUsername }, { projection: { followerUsername: 1 } }).toArray();
   return new Set(docs.map((d) => d.followerUsername));
 }
 
 export async function isProfileAlreadyScraped(profileUsername: string): Promise<boolean> {
+  const [followersP, targetP] = await Promise.all([
+    getFollowersCol(),
+    getTargetProfilesCol(),
+  ]);
   const [follower, flag] = await Promise.all([
-    followersCol.findOne({ sourceProfileUsername: profileUsername }, { projection: { _id: 1 } }),
-    targetProfilesCol.findOne(
+    followersP.findOne({ sourceProfileUsername: profileUsername }, { projection: { _id: 1 } }),
+    targetP.findOne(
       { profileUsername, $or: [{ isPrivate: true }, { isInvalid: true }] },
       { projection: { _id: 1 } },
     ),
@@ -109,14 +115,18 @@ export async function isProfileAlreadyScraped(profileUsername: string): Promise<
 export async function checkScrapedStatusBatch(
   usernames: string[],
 ): Promise<Record<string, "scraped" | "private" | "invalid" | null>> {
+  const [followersP, targetP] = await Promise.all([
+    getFollowersCol(),
+    getTargetProfilesCol(),
+  ]);
   const [followers, flags] = await Promise.all([
-    followersCol
+    followersP
       .aggregate([
         { $match: { sourceProfileUsername: { $in: usernames } } },
         { $group: { _id: "$sourceProfileUsername" } },
       ])
       .toArray(),
-    targetProfilesCol
+    targetP
       .find(
         { profileUsername: { $in: usernames }, $or: [{ isPrivate: true }, { isInvalid: true }] },
         { projection: { profileUsername: 1, isPrivate: 1, isInvalid: 1 } },
@@ -139,14 +149,16 @@ export async function checkScrapedStatusBatch(
 }
 
 export async function countScrapedSources(): Promise<number> {
-  const docs = await followersCol
+  const col = await getFollowersCol();
+  const docs = await col
     .aggregate([{ $group: { _id: "$sourceProfileUsername" } }, { $count: "total" }])
     .toArray();
   return docs[0]?.total ?? 0;
 }
 
 export async function markProfilePrivate(profileUsername: string): Promise<void> {
-  await targetProfilesCol.updateOne(
+  const col = await getTargetProfilesCol();
+  await col.updateOne(
     { profileUsername },
     { $set: { isPrivate: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
@@ -154,7 +166,8 @@ export async function markProfilePrivate(profileUsername: string): Promise<void>
 }
 
 export async function markProfileInvalid(profileUsername: string): Promise<void> {
-  await targetProfilesCol.updateOne(
+  const col = await getTargetProfilesCol();
+  await col.updateOne(
     { profileUsername },
     { $set: { isInvalid: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
@@ -164,6 +177,7 @@ export async function markProfileInvalid(profileUsername: string): Promise<void>
 export async function getScrapedSources(
   limit = 10,
 ): Promise<Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string; isPrivate?: boolean }>> {
+  const col = await getFollowersCol();
   const pipeline = [
     { $group: { _id: "$sourceProfileUsername", followerCount: { $sum: 1 } } },
     { $sort: { followerCount: -1 } },
@@ -187,11 +201,12 @@ export async function getScrapedSources(
       },
     },
   ];
-  return followersCol.aggregate(pipeline).toArray() as any;
+  return col.aggregate(pipeline).toArray() as any;
 }
 
 export async function saveSourceProfilePic(profileUsername: string, profilePicUrl: string): Promise<void> {
-  await targetProfilesCol.updateOne(
+  const col = await getTargetProfilesCol();
+  await col.updateOne(
     { profileUsername },
     { $set: { profilePicUrl, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
@@ -203,13 +218,14 @@ export async function updateTargetProfileScraped(
   followerCount: number,
   profilePicUrl?: string,
 ): Promise<void> {
+  const col = await getTargetProfilesCol();
   const $set: Record<string, unknown> = {
     lastScrapedAt: new Date(),
     followerCount,
     updatedAt: new Date(),
   };
   if (profilePicUrl) $set.profilePicUrl = profilePicUrl;
-  await targetProfilesCol.updateOne(
+  await col.updateOne(
     { profileUsername },
     { $set, $setOnInsert: { createdAt: new Date() } },
     { upsert: true },
@@ -221,14 +237,16 @@ export async function getAllFollowers(
   limit = 500,
   skip = 0,
 ): Promise<{ followers: InstagramFollowerRecord[]; total: number }> {
+  const col = await getFollowersCol();
   const filter = sourceProfile ? { sourceProfileUsername: sourceProfile } : {};
   const [followers, total] = await Promise.all([
-    followersCol.find(filter).sort({ lastSeenAt: -1 }).skip(skip).limit(limit).toArray(),
-    followersCol.countDocuments(filter),
+    col.find(filter).sort({ lastSeenAt: -1 }).skip(skip).limit(limit).toArray(),
+    col.countDocuments(filter),
   ]);
   return { followers, total };
 }
 
 export async function getAllDistinctSourceProfiles(): Promise<string[]> {
-  return followersCol.distinct("sourceProfileUsername");
+  const col = await getFollowersCol();
+  return col.distinct("sourceProfileUsername");
 }

@@ -20,13 +20,9 @@ services:
     networks:
       - app-network
       - mongodb-network
-      - selenium-network
 
 networks:
   app-network:
     driver: bridge
   mongodb-network:
     external: true
-  selenium-network:
-    external: true
-    name: autolog_selenium_public

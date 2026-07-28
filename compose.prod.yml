@@ -10,18 +10,13 @@ services:
       - .env.production
     environment:
       - PORT=3004
-      - SELENIUM_GRID_URL=http://selenium-hub:4444
     restart: unless-stopped
     networks:
       - app-network
       - mongodb-network
-      - selenium-network
 
 networks:
   app-network:
     driver: bridge
   mongodb-network:
     external: true
-  selenium-network:
-    external: true
-    name: autolog_selenium_public

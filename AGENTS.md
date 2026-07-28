@@ -24,55 +24,34 @@ No test framework exists. No test files.
 
 Path alias `@/*` → `src/*`.
 
-## Instagram Scraping Module (`src/server/instagram/`)
+## Instagram Cookie-Based Extraction (`src/server/instagram/`)
 
 ### Architecture
-- **YAML-driven**: Navigation, login, and follower extraction are defined as YAML action sequences in `src/server/instagram/actions/`
-- **ScrapingEngine** (`scraping-engine.ts`) executes YAML action definitions. Supported actions: `navigate`, `wait`, `waitFor`, `type`, `click`, `clickIfExists`, `extract`, `extractList`, `scrollToBottom`, `javascript`, `ifExists`, `repeat`
-- **Template interpolation**: `{profile.username}`, `{credentials.username}` in selectors/URLs
-- **Selenium WebDriver** connects to a **remote grid** at `SELENIUM_GRID_URL` (default `http://selenium-hub:4444`)
-- **Human-like delays** (`humanDelay()`) are built into the engine and YAML `waitAfter` fields
+- **No Selenium** — extraction uses direct GraphQL API calls over HTTP via a configurable proxy
+- **Cookie-based**: Paste cookies JSON → `parseCookies()` extracts session data → `buildInstagramHeaders()` constructs browser-like headers → `proxyFetch()` sends proxied GraphQL queries
+- **Single session**: one cookies JSON, sequential 1s-delay requests
+- **Fault tolerant**: 429 triggers exponential backoff (up to 5min), 302/303 to login = SESSION_EXPIRED
+- **Progress store** (`progress-store.ts`): in-memory run state for polling UI
 
 ### Key Files
 | File | Purpose |
 |------|---------|
-| `driver.ts` | Chrome driver creation (1920x1080, anti-detection flags) |
-| `login.ts` | Instagram login with cookie reuse and 2FA |
-| `scraping-engine.ts` | YAML action executor (223 lines, single class) |
-| `streaming-extractor.ts` | Multi-profile streaming extraction with progress callbacks |
-| `actions.ts` | Server actions for credential/extraction management (admin-only RBAC) |
-| `challenges.ts` | In-memory 2FA challenge store (5-min timeout) |
-| `progress-store.ts` | In-memory run state for polling |
-
-### Action YAML Files
-| File | What it does |
-|------|------|
-| `login.yaml` | Full login flow: navigate → fill credentials → handle 2FA → dismiss dialogs |
-| `navigate-profile.yaml` | Navigate to `{profile.username}` with error handling |
-| `followers.yaml` | Click followers link → open dialog → scroll → extract usernames via JS |
-| `reels.yaml` | Scroll reels (anti-detection break every 5 profiles) |
-
-### Critical: Instagram Selectors Must Be Class-Agnostic
-Instagram's CSS class names (like `_ap3a`, `x1i10hfl`) change between deployments/A-B tests. **Never use class-based selectors for element targeting.** Use:
-- **XPath by text content**: `//a[.//span[contains(translate(text(), 'FOLLOWERS', 'followers'), 'followers')]]`
-- **Structural attributes**: `span[dir='auto']`, `button` text matching
-- **JavaScript DOM heuristics**: Walk from known elements (buttons) to find related elements
-
-The `followers.yaml` `finalExtract` action uses JavaScript that:
-1. Finds all buttons with text "follow"/"following"/"requested"/"remove"
-2. Walks up 5 parent levels looking for `span[dir='auto']`
-3. Filters spans with no spaces, ≤30 chars, matching `[\w.]` (username pattern)
+| `cookie-session.ts` | Cookie parsing + Instagram header construction |
+| `graphql-extractor.ts` | Profile info resolution, GraphQL pagination, follower extraction (all cookie-based) |
+| `proxy-helper.ts` | ProxyAgent via undici, IP verification (`api.ip.cc`), `proxyFetch()` wrapper |
+| `streaming-extractor.ts` | Multi-profile streaming extraction with progress callbacks, DB upsert |
+| `actions.ts` | Server actions: start/poll/stop extraction, CSV export, scraped sources list |
+| `progress-store.ts` | In-memory run state (create, poll, stop) |
 
 ### Extraction Flow
-1. Login with cookies or 2FA
-2. For each target profile: navigate → open followers dialog → scroll 20x → extract via JS
-3. Every 5 profiles: scroll reels (anti-detection)
-4. Uses in-memory 2FA challenge store (`challenges.ts`) — when extracting multiple profiles, 2FA is submitted inline without re-navigating to login page
+1. User pastes cookies JSON → `startCookieExtractionAction` parses and creates a run
+2. `extractFollowersStreamFromCookies` verifies proxy, builds headers
+3. For each target profile: call `extractFollowersFromCookies` → resolve profile info → paginate via GraphQL → upsert followers to DB
+4. Stop signal is checked mid-pagination; stop is destructive (cannot resume in this session)
 
-### Session Management
-- Cookies saved per credential after successful login (DB: `instagramCredentials` collection)
-- Sessions expire after 7 days
-- Session data: `{ cookies, userAgent, savedAt, expiresAt }`
+### DB Collections Used
+- `instagramTargetProfiles` — tracks scraped/private/invalid status per profile
+- `instagramFollowers` — stores follower records with appearance tracking
 
 ## Auth & RBAC
 - **Better Auth** with email/password, MongoDB adapter
@@ -85,13 +64,12 @@ Required (from `.env.example`):
 - `MongoDB_URI`, `MONGO_DB_NAME`
 - `NEXT_PUBLIC_APP_URL`, `BETTER_AUTH_URL`
 - `BETTER_AUTH_SECRET`
-- `GROQ_API_KEY`
-- `SELENIUM_GRID_URL` (default: `http://selenium-hub:4444`)
+- `PROXY_URL` (optional, for Instagram cookie-based extraction)
 
 ## Docker
 - Dev: `docker compose up` — `compose.yml` spins up the Next.js dev server (port 3003, hot-reload via volume mount)
 - Prod: `compose.prod.yml` (port 3004)
-- Requires external networks: `mongodb-network` and `autolog_selenium_public` (Selenium)
+- Requires external network: `mongodb-network`
 
 ## Style
 - **Biome** (not ESLint/Prettier). Config at `biome.json` — includes import sorting groups, `useSortedClasses` for Tailwind, strict naming convention (`useFilenamingConvention: error`)

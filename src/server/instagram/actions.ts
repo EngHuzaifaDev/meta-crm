@@ -2,9 +2,10 @@
 
 import { headers } from "next/headers";
 
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 
 export async function startCookieExtractionAction(cookiesJson: string, usernames: string[], maxPages?: number) {
+  const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
   if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
 
@@ -63,7 +64,19 @@ export async function getProfileFollowersAction(profileUsername: string): Promis
 
 export async function getAllFollowersAction(sourceProfile?: string, page = 0, pageSize = 100) {
   const { getAllFollowers } = await import("@/lib/db/utils/instagram");
-  return getAllFollowers(sourceProfile, pageSize, page * pageSize);
+  const result = await getAllFollowers(sourceProfile, pageSize, page * pageSize);
+  return {
+    followers: result.followers.map((f) => ({
+      sourceProfileUsername: f.sourceProfileUsername,
+      followerUsername: f.followerUsername,
+      followerDisplayName: f.followerDisplayName ?? null,
+      followerAvatarUrl: f.followerAvatarUrl ?? null,
+      firstSeenAt: f.firstSeenAt instanceof Date ? f.firstSeenAt.toISOString() : String(f.firstSeenAt),
+      lastSeenAt: f.lastSeenAt instanceof Date ? f.lastSeenAt.toISOString() : String(f.lastSeenAt),
+      appearanceCount: f.appearanceCount,
+    })),
+    total: result.total,
+  };
 }
 
 export async function exportFollowersCSVAction(sourceProfile?: string): Promise<string> {

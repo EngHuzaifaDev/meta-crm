@@ -1,4 +1,3 @@
-// server/actions/auth.actions.ts
 "use server";
 
 import { headers } from "next/headers";
@@ -6,10 +5,9 @@ import { headers } from "next/headers";
 import { APIError } from "better-auth/api";
 import { z } from "zod";
 
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 import { countUsers, isEmailRegistered, updateUserFields } from "@/lib/db/utils/user";
 
-// ---------- Validation Schemas ----------
 const emailSchema = z.string().trim().toLowerCase();
 const passwordSchema = z.string().min(8, "Password must be at least 8 characters");
 const nameSchema = z.string().min(2, "Name must be at least 2 characters");
@@ -31,13 +29,11 @@ const signInSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-// ---------- Action State ----------
 export interface ActionState {
   error?: string;
   success?: boolean;
 }
 
-// ---------- Sign Up ----------
 export async function signUp(_prevState: ActionState, formData: FormData): Promise<ActionState> {
   const raw = {
     name: formData.get("name"),
@@ -52,20 +48,18 @@ export async function signUp(_prevState: ActionState, formData: FormData): Promi
 
   const { name, email, password } = parsed.data;
 
-  // Duplicate email check
   if (await isEmailRegistered(email)) {
     return { error: "An account with this email already exists." };
   }
 
   try {
-    // Create the user via Better Auth
+    const auth = await getAuth();
     const result = await auth.api.signUpEmail({
       body: { name, email, password },
     });
     const userId = result?.user?.id;
     if (!userId) throw new Error("User creation returned no ID");
 
-    // First user → admin (role = 0)
     const totalUsers = await countUsers();
     if (totalUsers <= 1) {
       await updateUserFields(userId, { role: 0 });
@@ -82,7 +76,6 @@ export async function signUp(_prevState: ActionState, formData: FormData): Promi
   }
 }
 
-// ---------- Sign In ----------
 export async function signIn(_prevState: ActionState, formData: FormData): Promise<ActionState> {
   const raw = {
     email: formData.get("email"),
@@ -94,6 +87,7 @@ export async function signIn(_prevState: ActionState, formData: FormData): Promi
   const { email, password } = parsed.data;
 
   try {
+    const auth = await getAuth();
     await auth.api.signInEmail({ body: { email, password } });
     return { success: true };
   } catch (error) {
@@ -106,18 +100,17 @@ export async function signIn(_prevState: ActionState, formData: FormData): Promi
   }
 }
 
-// ---------- Sign Out ----------
 export async function signOutAction() {
+  const auth = await getAuth();
   await auth.api.signOut({ headers: await headers() });
 }
 
-// ---------- Check if Email Exists ----------
 export async function checkEmailExistsAction(email: string): Promise<boolean> {
   return isEmailRegistered(email);
 }
 
-// ---------- Delete Account (Cascade) ----------
 export async function deleteAccountAction(): Promise<ActionState> {
+  const auth = await getAuth();
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user?.id) return { error: "Not authenticated" };
 
@@ -126,7 +119,7 @@ export async function deleteAccountAction(): Promise<ActionState> {
   try {
     await auth.api.deleteUser({
       body: {
-        password: "", // Assuming password is not required for deletion; adjust as needed
+        password: "",
       },
       headers: await headers(),
     });

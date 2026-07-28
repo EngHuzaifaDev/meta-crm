@@ -4,12 +4,13 @@ import { redirect } from "next/navigation";
 
 import { Command } from "lucide-react";
 
-import { auth } from "@/lib/auth";
+import { getAuth } from "@/lib/auth";
 
 import { RegisterForm } from "../../_components/register-form";
 
 export default async function RegisterV1() {
   // If the user is already logged in, send them to the dashboard
+  const auth = await getAuth();
   const session = await auth.api.getSession({
     headers: new Headers(), // in Next.js App Router you can import { headers } from "next/headers"
   });
