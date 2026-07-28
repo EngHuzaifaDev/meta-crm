@@ -93,6 +93,20 @@ export default function CookieExtractionPage() {
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
   const runIdRef = useRef<string | null>(null);
 
+  // Live cooldown ticker — tick down every second
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      setSessionStatuses((prev) =>
+        prev.map((s) => ({
+          ...s,
+          cooldownRemainingMs: s.coolingDown ? Math.max(0, s.cooldownRemainingMs - 1000) : 0,
+        })),
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
