@@ -1,38 +1,4 @@
 services:
-  mongodb:
-    image: mongo:7
-    container_name: meta-crm-mongo
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: root
-    volumes:
-      - mongo_data:/data/db
-
-  selenium-hub:
-    image: selenium/hub:latest
-    container_name: selenium-hub
-    ports:
-      - "4442:4442"
-      - "4443:4443"
-      - "4444:4444"
-
-  chrome:
-    image: selenium/node-chrome:latest
-    container_name: selenium-chrome
-    depends_on:
-      - selenium-hub
-    environment:
-      - SE_EVENT_BUS_HOST=selenium-hub
-      - SE_EVENT_BUS_PUBLISH_PORT=4442
-      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
-      - SE_NODE_MAX_SESSIONS=5
-    ports:
-      - "5900"
-    volumes:
-      - /dev/shm:/dev/shm
-
   app:
     build:
       context: .
@@ -42,16 +8,26 @@ services:
       - "3003:3003"
     env_file:
       - .env
+      - .env.local
     environment:
-      - MongoDB_URI=mongodb://root:root@mongodb:27017/?authSource=admin
+      - PORT=3003
+      - WATCHPACK_POLLING=true
       - SELENIUM_GRID_URL=http://selenium-hub:4444
     volumes:
       - .:/app
       - /app/node_modules
       - /app/.next
-    depends_on:
-      - mongodb
-      - selenium-hub
+    restart: unless-stopped
+    networks:
+      - app-network
+      - mongodb-network
+      - selenium-network
 
-volumes:
-  mongo_data:
+networks:
+  app-network:
+    driver: bridge
+  mongodb-network:
+    external: true
+  selenium-network:
+    external: true
+    name: autolog_selenium_public
