@@ -11,7 +11,7 @@ import type { CookieObject } from "./cookie-session";
 import { buildInstagramHeaders, parseCookies } from "./cookie-session";
 import { extractFollowersFromCookies } from "./graphql-extractor";
 import { getRunState } from "./progress-store";
-import { getProxyUrl, verifyProxyIP } from "./proxy-helper";
+import { getProxyUrl, getProxyHost, verifyProxyIP } from "./proxy-helper";
 
 const MIN_DELAY_MS = 2000;
 const MAX_DELAY_MS = 5000;
@@ -83,7 +83,7 @@ export async function extractFollowersStreamFromCookies(
     const hasProxy = !!getProxyUrl();
     await onProgress({
       type: "status",
-      message: `Parsed session cookies successfully${hasProxy ? " — proxy is configured and will be used" : ""}`,
+      message: `Parsed session cookies successfully${hasProxy ? ` — proxy configured (${getProxyHost() ?? "unknown"})` : ""}`,
       processedCount,
       totalCount,
     });

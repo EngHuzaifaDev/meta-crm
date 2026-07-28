@@ -1,6 +1,7 @@
 import { ProxyAgent, request as undiciRequest } from "undici";
 
 let cachedProxyAgent: ProxyAgent | null = null;
+let cachedProxyHost: string | null = null;
 
 export interface ProxyConfig {
   host: string;
@@ -32,6 +33,23 @@ export function getProxyUrl(): string | undefined {
   return process.env.PROXY_URL || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || undefined;
 }
 
+export function getProxyHost(): string | null {
+  if (cachedProxyHost) return cachedProxyHost;
+  const rawUrl = getProxyUrl();
+  if (!rawUrl) return null;
+  let normalized = rawUrl;
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalized)) {
+    normalized = `http://${normalized}`;
+  }
+  try {
+    const url = new URL(normalized);
+    cachedProxyHost = url.hostname;
+    return cachedProxyHost;
+  } catch {
+    return null;
+  }
+}
+
 function getOrCreateProxyAgent(): ProxyAgent | null {
   if (cachedProxyAgent) return cachedProxyAgent;
   const proxyUrl = getProxyUrl();
@@ -39,6 +57,11 @@ function getOrCreateProxyAgent(): ProxyAgent | null {
   const normalized = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(proxyUrl) ? proxyUrl : `http://${proxyUrl}`;
   cachedProxyAgent = new ProxyAgent(normalized);
   return cachedProxyAgent;
+}
+
+export function resetProxyAgent(): void {
+  cachedProxyAgent = null;
+  cachedProxyHost = null;
 }
 
 export async function verifyProxyIP(): Promise<{
@@ -74,7 +97,15 @@ export async function verifyProxyIP(): Promise<{
     }
     return { ip, ok: true };
   } catch (err: any) {
-    return { ip: "(error)", ok: false, error: err.message };
+    const proxyHost = getProxyHost() || "unknown";
+    if (err.message?.includes("407")) {
+      return {
+        ip: "(error)",
+        ok: false,
+        error: `Proxy authentication failed (407) at ${proxyHost} — check PROXY_URL credentials`,
+      };
+    }
+    return { ip: "(error)", ok: false, error: `${err.message} (proxy: ${proxyHost})` };
   }
 }
 
@@ -103,6 +134,12 @@ export async function proxyFetch(url: string, options: RequestInit = {}): Promis
     const text = await body.text();
     return new Response(text, { status: statusCode });
   } catch (err: any) {
-    throw new Error(`Proxy request failed: ${err.message}`);
+    const proxyHost = getProxyHost() || "unknown";
+    if (err.message?.includes("407")) {
+      throw new Error(
+        `Proxy authentication failed (407) at ${proxyHost} — check PROXY_URL credentials`,
+      );
+    }
+    throw new Error(`Proxy request failed: ${err.message} (proxy: ${proxyHost})`);
   }
 }
