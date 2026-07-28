@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  allowedDevOrigins: ["metacrm.sarrast.cloud"],
   compiler: {
     removeConsole: process.env.NODE_ENV === "production",
   },
