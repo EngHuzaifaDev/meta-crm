@@ -1,35 +1,7 @@
-import { ObjectId } from "mongodb";
-
 import { mongodbInstance } from "@/lib/db/mongodb";
 
-export interface SessionData {
-  cookies: Array<{
-    name: string;
-    value: string;
-    domain: string;
-    path: string;
-    httpOnly?: boolean;
-    secure?: boolean;
-    expiry?: number;
-  }>;
-  userAgent?: string;
-  savedAt: Date;
-  expiresAt?: Date;
-}
-
-export interface InstagramCredential {
-  _id?: ObjectId;
-  adminUserId: string;
-  instagramUsername: string;
-  encryptedPassword: string;
-  isActive: boolean;
-  session?: SessionData;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface InstagramTargetProfile {
-  _id?: ObjectId;
+  _id?: string;
   addedByUserId: string;
   profileUsername: string;
   lastScrapedAt?: Date;
@@ -42,7 +14,7 @@ export interface InstagramTargetProfile {
 }
 
 export interface InstagramFollowerRecord {
-  _id?: ObjectId;
+  _id?: string;
   sourceProfileUsername: string;
   followerUsername: string;
   followerDisplayName?: string;
@@ -52,48 +24,8 @@ export interface InstagramFollowerRecord {
   appearanceCount: number;
 }
 
-const credentialsCol = mongodbInstance.collection<InstagramCredential>("instagramCredentials");
 const targetProfilesCol = mongodbInstance.collection<InstagramTargetProfile>("instagramTargetProfiles");
 const followersCol = mongodbInstance.collection<InstagramFollowerRecord>("instagramFollowers");
-
-export async function createCredential(
-  data: Omit<InstagramCredential, "_id" | "createdAt" | "updatedAt">,
-): Promise<InstagramCredential> {
-  const now = new Date();
-  const doc = { ...data, createdAt: now, updatedAt: now };
-  const result = await credentialsCol.insertOne(doc as any);
-  return { ...doc, _id: result.insertedId } as InstagramCredential;
-}
-
-export async function getActiveCredentials(): Promise<InstagramCredential[]> {
-  return credentialsCol.find({ isActive: true }).toArray();
-}
-
-function toObjectId(id: string) {
-  try {
-    return new ObjectId(id);
-  } catch {
-    return id;
-  }
-}
-
-export async function getCredentialById(id: string): Promise<InstagramCredential | null> {
-  return credentialsCol.findOne({ _id: toObjectId(id) as any });
-}
-
-export async function saveSession(credentialId: string, session: SessionData): Promise<void> {
-  await credentialsCol.updateOne(
-    { _id: toObjectId(credentialId) as any },
-    { $set: { session, updatedAt: new Date() } },
-  );
-}
-
-export async function clearSession(credentialId: string): Promise<void> {
-  await credentialsCol.updateOne(
-    { _id: toObjectId(credentialId) as any },
-    { $unset: { session: "" }, $set: { updatedAt: new Date() } },
-  );
-}
 
 export async function addTargetProfile(data: {
   addedByUserId: string;
@@ -107,7 +39,7 @@ export async function addTargetProfile(data: {
     updatedAt: now,
   };
   const result = await targetProfilesCol.insertOne(doc as any);
-  return { ...doc, _id: result.insertedId } as InstagramTargetProfile;
+  return { ...doc, _id: String(result.insertedId) } as InstagramTargetProfile;
 }
 
 export async function getTargetProfiles(): Promise<InstagramTargetProfile[]> {

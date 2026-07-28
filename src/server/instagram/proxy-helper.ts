@@ -41,65 +41,6 @@ function getOrCreateProxyAgent(): ProxyAgent | null {
   return cachedProxyAgent;
 }
 
-function buildChromeProxyUrl(config: ProxyConfig): string {
-  return `--proxy-server=http://${config.host}:${config.port}`;
-}
-
-async function buildProxyAuthExtension(config: ProxyConfig): Promise<string | null> {
-  if (!config.username && !config.password) return null;
-  const JSZip = (await import("jszip")).default;
-  const zip = new JSZip();
-
-  zip.file(
-    "manifest.json",
-    JSON.stringify({
-      name: "Proxy Auth",
-      version: "1.0.0",
-      manifest_version: 3,
-      permissions: ["webRequest", "webRequestAuthProvider"],
-      host_permissions: ["<all_urls>"],
-      background: { service_worker: "background.js" },
-    }),
-  );
-
-  zip.file(
-    "background.js",
-    `chrome.webRequest.onAuthRequired.addListener(
-  (details, callback) => {
-    callback({
-      authCredentials: {
-        username: ${JSON.stringify(config.username)},
-        password: ${JSON.stringify(config.password)}
-      }
-    })
-  },
-  { urls: ["<all_urls>"] },
-  ["asyncBlocking"]
-)`,
-  );
-
-  const buf = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
-  return buf.toString("base64");
-}
-
-export async function buildChromeProxyOptions(): Promise<{
-  args: string[];
-  extensions: string[];
-}> {
-  const url = getProxyUrl();
-  if (!url) return { args: [], extensions: [] };
-
-  const config = parseProxyUrl(url);
-  if (!config) return { args: [], extensions: [] };
-
-  const args: string[] = [buildChromeProxyUrl(config)];
-  const extensions: string[] = [];
-  const ext = await buildProxyAuthExtension(config);
-  if (ext) extensions.push(ext);
-
-  return { args, extensions };
-}
-
 export async function verifyProxyIP(): Promise<{
   ip: string;
   region?: string;

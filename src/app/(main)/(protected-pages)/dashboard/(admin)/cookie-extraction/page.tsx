@@ -446,8 +446,11 @@ export default function CookieExtractionPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                The current page will finish, then extraction stops gracefully. Cursor will be saved so you can resume
-                later.
+                The current page will finish, then extraction stops.{" "}
+                <span className="font-semibold text-destructive">
+                  This is destructive — you will NOT be able to resume extraction for these profiles in this session.
+                </span>{" "}
+                Any followers already scraped will remain in the database.
               </p>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setShowStopModal(false)}>
