@@ -256,6 +256,39 @@ export async function startCookieExtractionAction(cookiesJson: string, usernames
   return { runId };
 }
 
+export async function startSessionExtractionAction(
+  sessions: Array<{ label: string; cookiesJson: string }>,
+  usernames: string[],
+  testMode?: boolean,
+) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const parsedSessions: Array<{ label: string; cookies: any[] }> = [];
+  for (const s of sessions) {
+    try {
+      const cookies = JSON.parse(s.cookiesJson);
+      if (!Array.isArray(cookies)) throw new Error();
+      parsedSessions.push({ label: s.label, cookies });
+    } catch {
+      return { error: `Invalid cookie JSON for session "${s.label}"` };
+    }
+  }
+
+  if (parsedSessions.length === 0) return { error: "At least one session required" };
+
+  const { createRun, pushEvent } = await import("./progress-store");
+  const { extractWithSessionRotation } = await import("./session-extractor");
+
+  const runId = createRun();
+
+  extractWithSessionRotation({ sessions: parsedSessions, usernames, runId, testMode }, (event) =>
+    pushEvent(runId, event as any),
+  );
+
+  return { runId };
+}
+
 export async function pollExtractionAction(runId: string) {
   const { getRunState } = await import("./progress-store");
   const state = getRunState(runId);
@@ -284,10 +317,10 @@ export async function checkScrapedSourcesAction(usernames: string[]) {
   return statuses as Record<string, "scraped" | "private" | "invalid" | null>;
 }
 
-export async function getScrapedSourcesAction() {
+export async function getScrapedSourcesAction(limit = 10) {
   const { getScrapedSources, countScrapedSources } = await import("@/lib/db/utils/instagram");
-  const [sources, total] = await Promise.all([getScrapedSources(10), countScrapedSources()]);
-  return { sources, hasMore: total > 10, total };
+  const [sources, total] = await Promise.all([getScrapedSources(limit), countScrapedSources()]);
+  return { sources, hasMore: total > limit, total };
 }
 
 export async function getProfileFollowersAction(profileUsername: string): Promise<string[]> {

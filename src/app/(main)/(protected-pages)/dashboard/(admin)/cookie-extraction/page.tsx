@@ -31,28 +31,31 @@ export default function CookieExtractionPage() {
     }
   }, []);
 
-  const startPolling = useCallback((id: string) => {
-    let lastEventCount = 0;
-    pollRef.current = setInterval(async () => {
-      const state = await pollExtractionAction(id);
-      if (!state) {
-        clearPoll();
-        setRunning(false);
-        sessionStorage.removeItem("cookieExtractionRunId");
-        return;
-      }
-      if (state.progress.length > lastEventCount) {
-        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
-        lastEventCount = state.progress.length;
-        setEvents((p) => [...p, ...newEvents]);
-      }
-      if (state.status !== "running") {
-        clearPoll();
-        setRunning(false);
-        sessionStorage.removeItem("cookieExtractionRunId");
-      }
-    }, 1000);
-  }, [clearPoll]);
+  const startPolling = useCallback(
+    (id: string) => {
+      let lastEventCount = 0;
+      pollRef.current = setInterval(async () => {
+        const state = await pollExtractionAction(id);
+        if (!state) {
+          clearPoll();
+          setRunning(false);
+          sessionStorage.removeItem("cookieExtractionRunId");
+          return;
+        }
+        if (state.progress.length > lastEventCount) {
+          const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
+          lastEventCount = state.progress.length;
+          setEvents((p) => [...p, ...newEvents]);
+        }
+        if (state.status !== "running") {
+          clearPoll();
+          setRunning(false);
+          sessionStorage.removeItem("cookieExtractionRunId");
+        }
+      }, 1000);
+    },
+    [clearPoll],
+  );
 
   useEffect(() => {
     const saved = sessionStorage.getItem("cookieExtractionRunId");
@@ -70,7 +73,10 @@ export default function CookieExtractionPage() {
       setRunning(true);
       startPolling(saved);
     })();
-    return () => { cancelled = true; clearPoll(); };
+    return () => {
+      cancelled = true;
+      clearPoll();
+    };
   }, [clearPoll, startPolling]);
 
   const startExtraction = async () => {
@@ -301,17 +307,17 @@ export default function CookieExtractionPage() {
                   <span className="shrink-0 w-6 opacity-50">{i + 1}</span>
                   <span
                     className={
-                    ev.type === "error"
-                      ? "text-destructive"
-                      : ev.type === "done"
-                        ? "text-green-500"
-                        : ev.type === "stopped"
-                          ? "text-orange-500"
-                          : ev.type === "invalid"
-                            ? "text-amber-500"
-                            : ev.type === "follower"
-                              ? "text-blue-400"
-                              : ""
+                      ev.type === "error"
+                        ? "text-destructive"
+                        : ev.type === "done"
+                          ? "text-green-500"
+                          : ev.type === "stopped"
+                            ? "text-orange-500"
+                            : ev.type === "invalid"
+                              ? "text-amber-500"
+                              : ev.type === "follower"
+                                ? "text-blue-400"
+                                : ""
                     }
                   >
                     {ev.type === "follower" ? `+ ${ev.followerUsername}` : ev.message || ev.error || ""}
