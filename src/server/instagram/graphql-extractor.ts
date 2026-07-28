@@ -385,6 +385,139 @@ export async function extractFollowersFromCookies(
   }
 }
 
+export interface AccountHeaders {
+  ds_user_id: string
+  headers: Record<string, string>
+}
+
+export interface RotationState {
+  accountIndex: number
+  requestsSinceRotation: number
+  cursor: string | null
+  page: number
+}
+
+const ROTATION_INTERVAL = 5
+
+export async function extractFollowersWithRotation(
+  accounts: AccountHeaders[],
+  state: RotationState,
+  targetUsername: string,
+  onProgress: GraphQLProgressCallback,
+  onStateChange: (s: RotationState) => Promise<void>,
+  stopSignal?: () => boolean,
+): Promise<GraphQLExtractionResult> {
+  if (accounts.length === 0) throw new Error("No accounts provided")
+  const active = accounts[state.accountIndex] || accounts[0]
+
+  const profile = await resolveProfileInfoFromCookies(targetUsername, active.headers)
+  if (profile.isPrivate) {
+    return {
+      profilePicUrl: profile.profilePicUrl,
+      isPrivate: true,
+      avatarUrls: new Map(),
+      totalFetched: 0,
+      estimatedTotal: 0,
+      pagesFetched: 0,
+    }
+  }
+
+  const userId = profile.id
+  let { cursor, page, accountIndex, requestsSinceRotation } = state
+
+  if (!cursor && page > 0) {
+    page = 0
+  }
+
+  let totalFetched = 0
+  let estimatedTotal = 0
+  let requestCount = 0
+  const avatarUrls = new Map<string, string>()
+
+  function getCurrentHeaders(): Record<string, string> {
+    return accounts[accountIndex]?.headers || accounts[0].headers
+  }
+
+  while (requestCount < MAX_REQUESTS_PER_SESSION) {
+    if (stopSignal?.()) {
+      await onStateChange({ accountIndex, requestsSinceRotation, cursor, page })
+      throw new Error("EXTRACTION_STOPPED")
+    }
+
+    let result: GraphQLPageResult
+
+    try {
+      const headers = getCurrentHeaders()
+      result = await fetchFollowersPageFromCookies(userId, headers, cursor || undefined)
+    } catch (err: any) {
+      if (err.message === "RATE_LIMITED") {
+        const wait = Math.min(60000 * 2 ** requestCount, 300000)
+        await new Promise((r) => setTimeout(r, wait))
+        requestCount++
+        continue
+      }
+      if (err.message === "SESSION_EXPIRED") {
+        accounts[accountIndex] = { ...accounts[accountIndex], ds_user_id: `${accounts[accountIndex]?.ds_user_id || ""}_expired` }
+        accountIndex = (accountIndex + 1) % accounts.length
+        requestsSinceRotation = 0
+        await onStateChange({ accountIndex, requestsSinceRotation, cursor, page })
+        continue
+      }
+      throw err
+    }
+
+    requestCount++
+
+    if (page === 0) {
+      estimatedTotal = result.estimatedTotal
+    }
+
+    const totalPages = Math.ceil(estimatedTotal / PAGE_SIZE)
+
+    for (const entry of result.usernames) {
+      totalFetched++
+      if (entry.profilePicUrl) {
+        avatarUrls.set(entry.username, entry.profilePicUrl)
+      }
+      await onProgress({
+        profileUsername: targetUsername,
+        page: page + 1,
+        totalPages,
+        fetchedCount: totalFetched,
+        estimatedTotal,
+        followerUsername: entry.username,
+        avatarUrl: entry.profilePicUrl || undefined,
+        message: `Page ${page + 1}/${totalPages} — ${totalFetched} followers fetched`,
+      })
+    }
+
+    cursor = result.endCursor ?? null
+    page++
+
+    await onStateChange({ accountIndex, requestsSinceRotation, cursor, page })
+
+    if (!result.hasNextPage) break
+
+    requestsSinceRotation++
+    if (requestsSinceRotation >= ROTATION_INTERVAL) {
+      accountIndex = (accountIndex + 1) % accounts.length
+      requestsSinceRotation = 0
+      await onStateChange({ accountIndex, requestsSinceRotation, cursor, page })
+    }
+
+    await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS))
+  }
+
+  return {
+    profilePicUrl: profile.profilePicUrl,
+    isPrivate: false,
+    avatarUrls,
+    totalFetched,
+    estimatedTotal,
+    pagesFetched: page,
+  }
+}
+
 export async function extractFollowersGraphQLViaDriver(
   driver: WebDriver,
   targetUsername: string,

@@ -302,3 +302,202 @@ export async function getProfileFollowersAction(profileUsername: string): Promis
   const records = await getFollowersForProfile(profileUsername);
   return records.map((r) => r.followerUsername);
 }
+
+// Multi-account extraction run actions
+
+export async function createExtractionRunAction(label: string, targetUsernames: string[]) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { createRun } = await import("@/lib/db/utils/extraction-runs");
+
+  const runId = await createRun({
+    adminUserId: sesh.user.id,
+    label,
+    accounts: [],
+    targetUsernames,
+    completedUsernames: [],
+    currentUsernameIndex: 0,
+    currentAccountIndex: 0,
+    requestsSinceRotation: 0,
+    currentCursor: null,
+    status: "idle",
+    stats: {
+      totalFollowers: 0,
+      totalEstimated: 0,
+      invalidCount: 0,
+      privateCount: 0,
+      duplicateCount: 0,
+      processedCount: 0,
+    },
+  });
+
+  return { runId: String(runId) };
+}
+
+export async function addAccountToRunAction(runId: string, label: string, cookiesJson: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  let cookies: any[];
+  try {
+    cookies = JSON.parse(cookiesJson);
+    if (!Array.isArray(cookies)) throw new Error();
+  } catch {
+    return { error: "Invalid cookie JSON" };
+  }
+
+  const { parseCookies } = await import("./cookie-session");
+  const session = parseCookies(cookies);
+  if (!session.ds_user_id) {
+    return { error: "Cookies missing ds_user_id" };
+  }
+
+  const { addAccountToRun } = await import("@/lib/db/utils/extraction-runs");
+
+  await addAccountToRun(runId, {
+    label: label || `Account ${session.ds_user_id.slice(0, 8)}`,
+    cookies,
+    ds_user_id: session.ds_user_id,
+    errorCount: 0,
+    lastUsedAt: null,
+    isActive: true,
+  });
+
+  return { success: true };
+}
+
+export async function removeAccountFromRunAction(runId: string, dsUserId: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { removeAccountFromRun } = await import("@/lib/db/utils/extraction-runs");
+  await removeAccountFromRun(runId, dsUserId);
+  return { success: true };
+}
+
+export async function startExtractionRunAction(runId: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { getRun, updateRunStatus } = await import("@/lib/db/utils/extraction-runs");
+
+  const run = await getRun(runId);
+  if (!run) return { error: "Run not found" };
+  if (run.accounts.length === 0) return { error: "No accounts added" };
+
+  if (run.status === "running") return { error: "Already running" };
+
+  await updateRunStatus(runId, "running");
+
+  const { runExtractionSession } = await import("./streaming-extractor");
+  const { createRun: createMemRun, pushEvent } = await import("./progress-store");
+
+  const memRunId = createMemRun();
+
+  runExtractionSession({
+    runId,
+    onProgress: (event) => pushEvent(memRunId, event),
+  });
+
+  return { memRunId };
+}
+
+export async function pauseExtractionRunAction(runId: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { updateRunStatus } = await import("@/lib/db/utils/extraction-runs");
+  await updateRunStatus(runId, "paused");
+  return { success: true };
+}
+
+export async function stopExtractionRunAction(runId: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { updateRunStatus } = await import("@/lib/db/utils/extraction-runs");
+  await updateRunStatus(runId, "completed");
+  return { success: true };
+}
+
+export async function getExtractionRunAction(runId: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { getRun } = await import("@/lib/db/utils/extraction-runs");
+  const run = await getRun(runId);
+  if (!run) return null;
+
+  return {
+    _id: String(run._id),
+    label: run.label,
+    accounts: run.accounts.map((a) => ({
+      label: a.label,
+      ds_user_id: a.ds_user_id,
+      isActive: a.isActive,
+      errorCount: a.errorCount,
+    })),
+    targetUsernames: run.targetUsernames,
+    completedUsernames: run.completedUsernames,
+    currentUsernameIndex: run.currentUsernameIndex,
+    status: run.status,
+    stats: run.stats,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+  };
+}
+
+export async function listExtractionRunsAction() {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return [];
+
+  const { listRuns } = await import("@/lib/db/utils/extraction-runs");
+  const runs = await listRuns(sesh.user.id);
+  return runs.map((r) => ({
+    _id: String(r._id),
+    label: r.label,
+    status: r.status,
+    accountsCount: r.accounts.length,
+    targetCount: r.targetUsernames.length,
+    completedCount: r.completedUsernames.length,
+    stats: r.stats,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  }));
+}
+
+export async function deleteExtractionRunAction(runId: string) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { deleteRun } = await import("@/lib/db/utils/extraction-runs");
+  await deleteRun(runId);
+  return { success: true };
+}
+
+export async function getRunFollowersCSVAction(runId: string): Promise<{ csv: string; filename: string } | { error: string }> {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  const { getRun } = await import("@/lib/db/utils/extraction-runs");
+  const run = await getRun(runId);
+  if (!run) return { error: "Run not found" };
+
+  const { getFollowersForProfile } = await import("@/lib/db/utils/instagram");
+
+  const header = "profile_username,follower_username\n";
+  const rows: string[] = [];
+
+  for (const profileUsername of run.completedUsernames) {
+    const followers = await getFollowersForProfile(profileUsername);
+    for (const f of followers) {
+      rows.push(`${profileUsername},${f.followerUsername}`);
+    }
+  }
+
+  const csv = header + rows.join("\n");
+  const filename = `extraction-${run.label.replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.csv`;
+
+  return { csv, filename };
+}

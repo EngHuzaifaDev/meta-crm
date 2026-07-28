@@ -9,7 +9,8 @@ import {
 
 import { createChallenge } from "./challenges"
 import { createDriver, extractCookies } from "./driver"
-import { extractFollowersFromCookies, extractFollowersGraphQLViaDriver, extractSessionCookies } from "./graphql-extractor"
+import { extractFollowersFromCookies, extractFollowersGraphQLViaDriver, extractFollowersWithRotation, extractSessionCookies } from "./graphql-extractor"
+import type { RotationState, AccountHeaders } from "./graphql-extractor"
 import { loginToInstagram } from "./login"
 import { ScrapingEngine } from "./scraping-engine"
 import { verifyProxyIP } from "./proxy-helper"
@@ -661,5 +662,237 @@ export async function extractFollowersStreamFromCookies(
       processedCount,
       totalCount,
     })
+  }
+}
+
+export interface SessionRunOptions {
+  runId: string
+  onProgress: ProgressCallback
+}
+
+export async function runExtractionSession(
+  options: SessionRunOptions,
+): Promise<void> {
+  const { getRun, updateRunStatus, saveExtractionProgress } = await import(
+    "@/lib/db/utils/extraction-runs"
+  )
+
+  const run = await getRun(options.runId)
+  if (!run) {
+    await options.onProgress({ type: "error", error: "Run not found" })
+    return
+  }
+
+  if (run.status !== "running") {
+    return
+  }
+
+  const activeAccounts = run.accounts.filter((a) => a.isActive)
+  if (activeAccounts.length === 0) {
+    await options.onProgress({ type: "error", error: "No active accounts" })
+    return
+  }
+
+  const accountHeaders: AccountHeaders[] = activeAccounts.map((a) => {
+    const session = parseCookies(a.cookies)
+    return {
+      ds_user_id: a.ds_user_id,
+      headers: buildInstagramHeaders(session, a.cookies),
+    }
+  })
+
+  let { totalFollowers, totalEstimated, invalidCount, privateCount, duplicateCount, processedCount } = run.stats
+  const completedUsernames = new Set(run.completedUsernames)
+
+  const stopFlag = { stopped: false }
+  const stopPoll = setInterval(async () => {
+    const current = await getRun(options.runId)
+    stopFlag.stopped = !current || current.status !== "running"
+  }, 2000)
+
+  const cleanup = () => clearInterval(stopPoll)
+
+  try {
+    for (let i = run.currentUsernameIndex; i < run.targetUsernames.length; i++) {
+      const targetUsername = run.targetUsernames[i]
+
+      const currentRun = await getRun(options.runId)
+      if (!currentRun || currentRun.status !== "running") break
+
+      if (completedUsernames.has(targetUsername)) {
+        processedCount++
+        continue
+      }
+
+      await options.onProgress({
+        type: "status",
+        profileUsername: targetUsername,
+        message: `[${i + 1}/${run.targetUsernames.length}] Fetching followers for @${targetUsername}...`,
+        processedCount,
+        totalCount: run.targetUsernames.length,
+      })
+
+      const initialState: RotationState = {
+        accountIndex:
+          targetUsername === run.targetUsernames[run.currentUsernameIndex]
+            ? run.currentAccountIndex
+            : 0,
+        requestsSinceRotation:
+          targetUsername === run.targetUsernames[run.currentUsernameIndex]
+            ? run.requestsSinceRotation
+            : 0,
+        cursor: targetUsername === run.targetUsernames[run.currentUsernameIndex] ? run.currentCursor : null,
+        page: 0,
+      }
+
+      let extractedCount = 0
+      let profilePicUrl = ""
+
+      try {
+        const result = await extractFollowersWithRotation(
+          accountHeaders,
+          initialState,
+          targetUsername,
+          async (gqlEvent) => {
+            if (gqlEvent.followerUsername) {
+              await upsertFollower(targetUsername, gqlEvent.followerUsername)
+              await options.onProgress({
+                type: "follower",
+                profileUsername: targetUsername,
+                followerUsername: gqlEvent.followerUsername,
+                count: gqlEvent.fetchedCount,
+                totalFollowers: gqlEvent.estimatedTotal,
+                estimatedTotal: gqlEvent.estimatedTotal,
+                processedCount,
+                totalCount: run.targetUsernames.length,
+                page: gqlEvent.page,
+                totalPages: gqlEvent.totalPages,
+              })
+            }
+          },
+          async (state) => {
+            await saveExtractionProgress(options.runId, {
+              currentCursor: state.cursor,
+              currentUsernameIndex: i,
+              currentAccountIndex: state.accountIndex,
+              requestsSinceRotation: state.requestsSinceRotation,
+              stats: {
+                totalFollowers,
+                totalEstimated,
+                invalidCount,
+                privateCount,
+                duplicateCount,
+                processedCount,
+              },
+              completedUsernames: [...completedUsernames],
+            })
+          },
+          () => stopFlag.stopped,
+        )
+
+        if (result.isPrivate) {
+          privateCount++
+          await markProfilePrivate(targetUsername)
+          await options.onProgress({
+            type: "error",
+            profileUsername: targetUsername,
+            error: "Private",
+            processedCount,
+            totalCount: run.targetUsernames.length,
+          })
+          continue
+        }
+
+        extractedCount = result.totalFetched
+        totalEstimated += result.estimatedTotal
+        profilePicUrl = result.profilePicUrl
+      } catch (error: any) {
+        if (error.message?.includes("RATE_LIMITED")) {
+          await options.onProgress({
+            type: "error",
+            profileUsername: targetUsername,
+            error: "Rate limited",
+            processedCount,
+            totalCount: run.targetUsernames.length,
+          })
+          break
+        }
+
+        if (error.message?.includes("SESSION_EXPIRED")) {
+          await options.onProgress({
+            type: "error",
+            profileUsername: targetUsername,
+            error: "All sessions expired",
+            processedCount,
+            totalCount: run.targetUsernames.length,
+          })
+          break
+        }
+
+        if (error.message?.includes("EXTRACTION_STOPPED")) {
+          break
+        }
+
+        if (error.message?.includes("User not found") || error.message?.includes("Invalid username")) {
+          invalidCount++
+          await markProfileInvalid(targetUsername)
+          await options.onProgress({
+            type: "error",
+            profileUsername: targetUsername,
+            error: "Invalid/not found",
+            processedCount,
+            totalCount: run.targetUsernames.length,
+          })
+          continue
+        }
+
+        throw error
+      }
+
+      totalFollowers += extractedCount
+      processedCount++
+      completedUsernames.add(targetUsername)
+
+      await updateTargetProfileScraped(targetUsername, extractedCount, profilePicUrl || undefined)
+
+      await saveExtractionProgress(options.runId, {
+        currentCursor: null,
+        currentUsernameIndex: i + 1,
+        currentAccountIndex: 0,
+        requestsSinceRotation: 0,
+        stats: {
+          totalFollowers,
+          totalEstimated,
+          invalidCount,
+          privateCount,
+          duplicateCount,
+          processedCount,
+        },
+        completedUsernames: [...completedUsernames],
+      })
+    }
+
+    await updateRunStatus(options.runId, "completed")
+    await options.onProgress({
+      type: "done",
+      message: "Extraction complete",
+      totalFollowers,
+      totalEstimatedFollowers: totalEstimated,
+      invalidCount,
+      privateCount,
+      duplicateCount,
+      processedCount,
+      totalCount: run.targetUsernames.length,
+    })
+  } catch (error: any) {
+    await updateRunStatus(options.runId, "error")
+    await options.onProgress({
+      type: "error",
+      error: error.message || "Unknown error during extraction",
+      processedCount,
+      totalCount: run.targetUsernames.length,
+    })
+  } finally {
+    cleanup()
   }
 }
