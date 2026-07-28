@@ -98,6 +98,7 @@ export default function CookieExtractionPage() {
 
     const runId = result.runId
 
+    let lastEventCount = 0
     pollRef.current = setInterval(async () => {
       const state = await pollExtractionAction(runId)
       if (!state) {
@@ -105,8 +106,10 @@ export default function CookieExtractionPage() {
         setRunning(false)
         return
       }
-      if (state.lastEvent) {
-        setEvents((p) => [...p, state.lastEvent as ProgressEvent])
+      if (state.progress.length > lastEventCount) {
+        const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[]
+        lastEventCount = state.progress.length
+        setEvents((p) => [...p, ...newEvents])
       }
       if (state.status !== "running") {
         clearInterval(pollRef.current!)

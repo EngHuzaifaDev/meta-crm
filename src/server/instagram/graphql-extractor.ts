@@ -165,18 +165,21 @@ export interface GraphQLPageResult {
 }
 
 async function parseGraphQLResponse(data: any): Promise<GraphQLPageResult> {
-  const edge = data.data?.user?.edge_followed_by
-  if (!edge) throw new Error("Unexpected GraphQL response structure — missing edge_followed_by")
+  const edge = data?.data?.user?.edge_followed_by
+  if (!edge) {
+    const snippet = JSON.stringify(data).slice(0, 500)
+    throw new Error(`Unexpected GraphQL response — ${snippet}`)
+  }
   return {
-    usernames: edge.edges.map((e: any) => ({
+    usernames: (edge.edges || []).map((e: any) => ({
       username: e.node.username,
       fullName: e.node.full_name || "",
       profilePicUrl: e.node.profile_pic_url || "",
       isVerified: !!e.node.is_verified,
       id: String(e.node.id),
     })),
-    endCursor: edge.page_info.end_cursor || null,
-    hasNextPage: !!edge.page_info.has_next_page,
+    endCursor: edge.page_info?.end_cursor || null,
+    hasNextPage: !!edge.page_info?.has_next_page,
     estimatedTotal: edge.count ?? 0,
   }
 }
@@ -256,9 +259,17 @@ export async function resolveProfileInfoFromCookies(
     const body = await response.text()
     throw new Error(`Instagram API error (${response.status}): ${body.slice(0, 200)}`)
   }
-  const data = await response.json() as { data: { user: any } }
-  const user = data.data?.user
-  if (!user) throw new Error("PROFILE_NOT_FOUND")
+  const body = await response.text()
+  let parsed: any
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    throw new Error(`Profile info: non-JSON response (${response.status}): ${body.slice(0, 300)}`)
+  }
+  const user = parsed?.data?.user
+  if (!user) {
+    throw new Error(`Profile info: unexpected structure: ${body.slice(0, 300)}`)
+  }
   return {
     id: String(user.id),
     isPrivate: !!user.is_private,
@@ -293,8 +304,14 @@ export async function fetchFollowersPageFromCookies(
     throw new Error(`Instagram API error (${response.status}): ${body.slice(0, 200)}`)
   }
 
-  const data = await response.json() as { data: { user: { edge_followed_by: any } } }
-  return parseGraphQLResponse(data)
+  const text = await response.text()
+  let parsed: any
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error(`Instagram API returned non-JSON (${response.status}): ${text.slice(0, 300)}`)
+  }
+  return parseGraphQLResponse(parsed)
 }
 
 export async function extractFollowersFromCookies(
