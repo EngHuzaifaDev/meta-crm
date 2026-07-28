@@ -238,6 +238,31 @@ export async function startExtractionAction(credentialId: string, usernames: str
   return { runId };
 }
 
+export async function startCookieExtractionAction(cookiesJson: string, usernames: string[], maxPages?: number) {
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+
+  let cookies: any[];
+  try {
+    cookies = JSON.parse(cookiesJson);
+    if (!Array.isArray(cookies)) throw new Error();
+  } catch {
+    return { error: "Invalid cookie JSON — expected an array" };
+  }
+
+  const { createRun, pushEvent } = await import("./progress-store");
+  const { extractFollowersStreamFromCookies } = await import("./streaming-extractor");
+
+  const runId = createRun();
+
+  extractFollowersStreamFromCookies(
+    { cookies, usernames, maxPages },
+    (event) => pushEvent(runId, event),
+  );
+
+  return { runId };
+}
+
 export async function pollExtractionAction(runId: string) {
   const { getRunState } = await import("./progress-store");
   const state = getRunState(runId);

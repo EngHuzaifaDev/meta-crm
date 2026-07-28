@@ -1,23 +1,33 @@
 import { Builder, WebDriver } from 'selenium-webdriver';
+import { buildChromeProxyOptions } from './proxy-helper';
 
 const SELENIUM_GRID_URL =
   process.env.SELENIUM_GRID_URL || 'http://selenium-hub:4444';
 
 export async function createDriver(): Promise<WebDriver> {
+  const proxyOptions = await buildChromeProxyOptions();
+
+  const chromeOptions: { args: string[]; extensions?: string[] } = {
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--window-size=1920,1080',
+      '--disable-gpu',
+      '--lang=en-US',
+      ...proxyOptions.args,
+    ],
+  };
+
+  if (proxyOptions.extensions.length > 0) {
+    chromeOptions.extensions = proxyOptions.extensions;
+  }
+
   const driver = await new Builder()
     .usingServer(SELENIUM_GRID_URL)
     .withCapabilities({
       browserName: 'chrome',
-      'goog:chromeOptions': {
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--window-size=1920,1080',
-          '--disable-gpu',
-          '--lang=en-US',
-        ],
-      },
+      'goog:chromeOptions': chromeOptions,
     })
     .build();
 

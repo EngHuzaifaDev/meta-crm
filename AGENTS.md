@@ -5,7 +5,7 @@
 | Action | Command | Notes |
 |--------|---------|-------|
 | Dev server | `npm run dev` | Port **3003** (not default) |
-| Build | `npm run build` | Next.js standalone output |
+| Build | `npm run build` | ⚠️ Do NOT run unless explicitly permitted (can time out) |
 | Lint | `npm run lint` | `biome lint` (NOT ESLint) |
 | Format | `npm run format` | `biome format --write` |
 | Full check | `npm run check` | `biome check` — lint + format |
