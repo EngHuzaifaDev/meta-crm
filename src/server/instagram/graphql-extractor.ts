@@ -3,7 +3,7 @@ import { logger } from "./logger";
 
 const QUERY_HASH = "37479f2b8209594dde7facb0d904896a";
 const PAGE_SIZE = 50;
-const REQUEST_DELAY_MS = 1000;
+const REQUEST_DELAY_MS = 500;
 const MAX_REQUESTS_PER_SESSION = Infinity;
 
 export interface SessionCookies {
