@@ -12,6 +12,7 @@ import { buildInstagramHeaders, parseCookies } from "./cookie-session";
 import { extractFollowersFromCookies } from "./graphql-extractor";
 import { getRunState } from "./progress-store";
 import { getProxyHost, getProxyUrl, verifyProxyIP } from "./proxy-helper";
+import { logger } from "./logger";
 
 const MIN_DELAY_MS = 2000;
 const MAX_DELAY_MS = 5000;
@@ -64,14 +65,18 @@ export async function extractFollowersStreamFromCookies(
   try {
     const session = parseCookies(options.cookies);
     if (!session.csrftoken || !session.sessionid || !session.ds_user_id) {
+      logger.error("Session", "Missing required cookies: csrftoken, sessionid, ds_user_id")
       await onProgress({
         type: "error",
         error: "Missing required cookies: csrftoken, sessionid, ds_user_id",
       });
       return;
     }
+    logger.ok("Session", `Cookies parsed — user_id=${session.ds_user_id}`)
 
     const hasProxy = !!getProxyUrl();
+    const proxyHost = getProxyHost() ?? "none"
+    logger.info("Proxy", hasProxy ? `Configured — ${proxyHost}` : "Not configured")
     await onProgress({
       type: "status",
       message: `Parsed session cookies successfully${hasProxy ? ` — proxy configured (${getProxyHost() ?? "unknown"})` : ""}`,
@@ -81,6 +86,7 @@ export async function extractFollowersStreamFromCookies(
 
     const proxyCheck = await verifyProxyIP();
     if (!proxyCheck.ok) {
+      logger.warn("Proxy", `Verification failed — ${proxyCheck.error}`)
       await onProgress({
         type: "status",
         message: `WARNING: Proxy verification failed — ${proxyCheck.error} — continuing anyway`,
@@ -88,6 +94,7 @@ export async function extractFollowersStreamFromCookies(
         totalCount,
       });
     } else {
+      logger.ok("Proxy", `Verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`)
       await onProgress({
         type: "status",
         message: `Proxy verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`,
@@ -98,6 +105,7 @@ export async function extractFollowersStreamFromCookies(
 
     const headers = buildInstagramHeaders(session, options.cookies);
 
+    logger.info("Extraction", `Starting — ${totalCount} profiles`)
     await onProgress({
       type: "status",
       message: `Starting extraction for ${totalCount} profiles`,
@@ -126,6 +134,7 @@ export async function extractFollowersStreamFromCookies(
 
       const alreadyScraped = await isProfileAlreadyScraped(targetUsername);
       if (alreadyScraped) {
+        logger.info(targetUsername, "Already scraped — skipped")
         await onProgress({
           type: "skipped",
           profileUsername: targetUsername,
@@ -136,6 +145,7 @@ export async function extractFollowersStreamFromCookies(
         continue;
       }
 
+      logger.info(targetUsername, `[${processedCount}/${totalCount}] Fetching followers...`)
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
@@ -175,11 +185,12 @@ export async function extractFollowersStreamFromCookies(
               totalCount,
             });
 
-            if (gqlEvent.followerUsername) {
-              const username = gqlEvent.followerUsername;
-              if (existingFollowers.has(username)) {
-                duplicateCount++;
-              } else {
+              if (gqlEvent.followerUsername) {
+                const username = gqlEvent.followerUsername;
+                if (existingFollowers.has(username)) {
+                  duplicateCount++;
+                  logger.debug(targetUsername, `Duplicate: ${username}`)
+                } else {
                 existingFollowers.add(username);
                 await upsertFollower(targetUsername, username, undefined, gqlEvent.avatarUrl);
                 extractedCount++;
@@ -218,6 +229,11 @@ export async function extractFollowersStreamFromCookies(
 
         profilePicUrl = result.profilePicUrl;
 
+        if (extractedCount > 0) {
+          logger.ok(targetUsername, `${extractedCount} followers extracted`)
+        } else {
+          logger.info(targetUsername, "No new followers found")
+        }
         await onProgress({
           type: "follower",
           profileUsername: targetUsername,
@@ -248,6 +264,7 @@ export async function extractFollowersStreamFromCookies(
         }
 
         if (msg.includes("SESSION_EXPIRED")) {
+          logger.error(targetUsername, "Session expired — need fresh cookies")
           await onProgress({
             type: "error",
             error: "Session expired — provide fresh cookies",
@@ -258,6 +275,7 @@ export async function extractFollowersStreamFromCookies(
         }
 
         if (msg.includes("PROFILE_NOT_FOUND")) {
+          logger.warn(targetUsername, "Profile not found")
           await markProfileInvalid(targetUsername);
           invalidCount++;
           await onProgress({
@@ -269,6 +287,7 @@ export async function extractFollowersStreamFromCookies(
             totalCount,
           });
         } else {
+          logger.error(targetUsername, `API error — ${msg}`)
           await onProgress({
             type: "status",
             profileUsername: targetUsername,
@@ -282,6 +301,7 @@ export async function extractFollowersStreamFromCookies(
 
       await updateTargetProfileScraped(targetUsername, extractedCount, profilePicUrl);
 
+      logger.ok(targetUsername, `Done — ${extractedCount} followers (${duplicateCount} dupes, ${invalidCount} invalid)`)
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
@@ -304,6 +324,7 @@ export async function extractFollowersStreamFromCookies(
       }
     }
 
+    logger.ok("Extraction", `Complete — ${totalFollowers} followers, ${invalidCount} invalid, ${privateCount} private, ${duplicateCount} dupes`)
     await onProgress({
       type: "done",
       message: "Extraction complete",
@@ -316,6 +337,7 @@ export async function extractFollowersStreamFromCookies(
       totalCount,
     });
   } catch (error: any) {
+    logger.error("Extraction", `Fatal: ${error.message || "Unknown"}`)
     await onProgress({
       type: "error",
       error: error.message || "Unknown error during extraction",

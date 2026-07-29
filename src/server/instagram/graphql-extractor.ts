@@ -1,4 +1,5 @@
 import { proxyFetch } from "./proxy-helper";
+import { logger } from "./logger";
 
 const QUERY_HASH = "37479f2b8209594dde7facb0d904896a";
 const PAGE_SIZE = 50;
@@ -51,6 +52,7 @@ export async function resolveProfileInfoFromCookies(
   username: string,
   headers: Record<string, string>,
 ): Promise<ProfileInfo> {
+  logger.info(username, "Resolving profile info...")
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
   const response = await proxyFetch(url, { method: "GET", headers });
   if (response.status === 404) throw new Error("PROFILE_NOT_FOUND");
@@ -84,6 +86,7 @@ export async function fetchFollowersPageFromCookies(
   const vars: Record<string, any> = { id: userId, first: PAGE_SIZE };
   if (cursor) vars.after = cursor;
 
+  logger.debug("GraphQL", `Page ${cursor ? "(cursor)" : "1"} — id=${userId.slice(0, 8)}...`)
   const url = `https://www.instagram.com/graphql/query/?query_hash=${QUERY_HASH}&variables=${encodeURIComponent(JSON.stringify(vars))}`;
   const response = await proxyFetch(url, { method: "GET", headers, redirect: "manual" });
 
