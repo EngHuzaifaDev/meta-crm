@@ -14,7 +14,6 @@ import { getProxyHost, getProxyUrl, verifyProxyIP } from "./proxy-helper";
 
 const MIN_DELAY_MS = 2000;
 const MAX_DELAY_MS = 5000;
-const BATCH_SIZE = 500;
 
 function randomDelay(): Promise<void> {
   const ms = MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS);
@@ -147,6 +146,7 @@ export async function extractFollowersStreamFromCookies(
       try {
         const sessionSet = new Set<string>();
         let batch: Array<{ followerUsername: string; avatarUrl?: string }> = [];
+        let lastPage = 0;
 
         const flushBatch = async () => {
           if (batch.length === 0) return;
@@ -183,13 +183,18 @@ export async function extractFollowersStreamFromCookies(
             });
 
             if (gqlEvent.followerUsername) {
+              const currentPage = gqlEvent.page;
+              if (currentPage !== lastPage && batch.length > 0) {
+                await flushBatch();
+              }
+              lastPage = currentPage;
+
               const username = gqlEvent.followerUsername;
               if (sessionSet.has(username)) {
                 duplicateCount++;
               } else {
                 sessionSet.add(username);
                 batch.push({ followerUsername: username, avatarUrl: gqlEvent.avatarUrl });
-                if (batch.length >= BATCH_SIZE) await flushBatch();
               }
 
               await onProgress({
