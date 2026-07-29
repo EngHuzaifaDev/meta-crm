@@ -29,7 +29,7 @@ export async function startCookieExtractionAction(cookiesJson: string, usernames
 
 export async function pollExtractionAction(runId: string) {
   const { getRunState } = await import("./progress-store");
-  const state = getRunState(runId, 50);
+  const state = getRunState(runId, 2000);
   if (!state) return { status: "not_found" as const, progress: [], lastEvent: null };
   return {
     status: state.status,

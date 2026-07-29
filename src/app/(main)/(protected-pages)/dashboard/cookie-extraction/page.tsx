@@ -64,7 +64,6 @@ export default function CookieExtractionPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
   const runIdRef = useRef<string | null>(null);
-  const lastEventCountRef = useRef(0);
 
   useEffect(() => {
     getScrapedSourcesAction(50)
@@ -81,26 +80,30 @@ export default function CookieExtractionPage() {
 
   const startPolling = useCallback(
     (id: string) => {
-      lastEventCountRef.current = 0;
       pollRef.current = setInterval(async () => {
-        const state = await pollExtractionAction(id);
-        if (!state) {
-          clearPoll();
-          setPageState("idle");
-          sessionStorage.removeItem(STORAGE_RUN_ID);
-          return;
-        }
-        if (state.progress.length > lastEventCountRef.current) {
-          const newEvents = state.progress.slice(lastEventCountRef.current) as ProgressEvent[];
-          lastEventCountRef.current = state.progress.length;
-          setEvents((p) => [...p, ...newEvents]);
-        }
-        if (state.status !== "running") {
-          clearPoll();
-          sessionStorage.removeItem(STORAGE_RUN_ID);
-          if (state.status === "done") setPageState("completed");
-          else if (state.status === "error") setPageState("error");
-          else if (state.status === "stopped") setPageState("stopped");
+        try {
+          const state = await pollExtractionAction(id);
+          if (!state) {
+            clearPoll();
+            setPageState("idle");
+            sessionStorage.removeItem(STORAGE_RUN_ID);
+            return;
+          }
+          setEvents((prev) => {
+            if (state.progress.length > prev.length) {
+              return [...prev, ...state.progress.slice(prev.length)];
+            }
+            return prev;
+          });
+          if (state.status !== "running") {
+            clearPoll();
+            sessionStorage.removeItem(STORAGE_RUN_ID);
+            if (state.status === "done") setPageState("completed");
+            else if (state.status === "error") setPageState("error");
+            else if (state.status === "stopped") setPageState("stopped");
+          }
+        } catch (err) {
+          console.error("Poll error:", err);
         }
       }, 1000);
     },
@@ -143,12 +146,10 @@ export default function CookieExtractionPage() {
 
       if (state.status === "running") {
         runIdRef.current = savedRunId;
-        lastEventCountRef.current = state.progress.length;
         setEvents(state.progress as ProgressEvent[]);
         setPageState("running");
         startPolling(savedRunId);
       } else {
-        lastEventCountRef.current = state.progress.length;
         setEvents(state.progress as ProgressEvent[]);
         if (state.status === "done") setPageState("completed");
         else if (state.status === "error") setPageState("error");
@@ -255,7 +256,6 @@ export default function CookieExtractionPage() {
     setRestoreFailed(false);
     sessionStorage.removeItem(STORAGE_RUN_ID);
     runIdRef.current = null;
-    lastEventCountRef.current = 0;
   };
 
   const last = events[events.length - 1];
