@@ -1,4 +1,4 @@
-import { Cookie, type LucideIcon, Users } from "lucide-react";
+import { Cookie, type LucideIcon, Shield, Users } from "lucide-react";
 
 export type NavBadge = "new" | "soon";
 
@@ -56,6 +56,19 @@ export const sidebarItems: NavGroup[] = [
         title: "Followers",
         url: "/dashboard/followers",
         icon: Users,
+      },
+    ],
+  },
+  {
+    id: 2,
+    label: "Admin",
+    items: [
+      {
+        id: "admin",
+        title: "Developer",
+        url: "/dashboard/admin",
+        icon: Shield,
+        requiredRole: 0,
       },
     ],
   },

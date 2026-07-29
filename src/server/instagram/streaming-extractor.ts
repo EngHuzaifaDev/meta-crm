@@ -11,7 +11,7 @@ import type { CookieObject } from "./cookie-session";
 import { buildInstagramHeaders, parseCookies } from "./cookie-session";
 import { extractFollowersFromCookies } from "./graphql-extractor";
 import { getRunState } from "./progress-store";
-import { getProxyUrl, getProxyHost, verifyProxyIP } from "./proxy-helper";
+import { getProxyHost, getProxyUrl, verifyProxyIP } from "./proxy-helper";
 
 const MIN_DELAY_MS = 2000;
 const MAX_DELAY_MS = 5000;
@@ -22,16 +22,7 @@ function randomDelay(): Promise<void> {
 }
 
 export interface ProgressEvent {
-  type:
-    | "status"
-    | "follower"
-    | "invalid"
-    | "duplicate"
-    | "skipped"
-    | "private"
-    | "done"
-    | "error"
-    | "stopped";
+  type: "status" | "follower" | "invalid" | "duplicate" | "skipped" | "private" | "done" | "error" | "stopped";
   profileUsername?: string;
   message?: string;
   followerUsername?: string;

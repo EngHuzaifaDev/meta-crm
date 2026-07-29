@@ -101,3 +101,17 @@ export async function getAllDistinctSourceProfilesAction(): Promise<string[]> {
   const { getAllDistinctSourceProfiles } = await import("@/lib/db/utils/instagram");
   return getAllDistinctSourceProfiles();
 }
+
+export async function getProfilesWithStatsAction() {
+  const { getProfilesWithStats } = await import("@/lib/db/utils/instagram");
+  return getProfilesWithStats();
+}
+
+export async function deleteProfileDataAction(profileUsername: string) {
+  const auth = await getAuth();
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+
+  const { deleteProfileData } = await import("@/lib/db/utils/instagram");
+  return deleteProfileData(profileUsername);
+}

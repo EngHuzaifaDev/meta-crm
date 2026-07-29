@@ -46,6 +46,10 @@ const STORAGE_FORM = "cookieExtractionForm";
 
 type PageState = "idle" | "restoring" | "running" | "completed" | "stopped" | "error";
 
+function saveFormState(cookiesJson: string, usernames: string, testMode: boolean) {
+  sessionStorage.setItem(STORAGE_FORM, JSON.stringify({ cookiesJson, usernames, testMode }));
+}
+
 export default function CookieExtractionPage() {
   const [cookiesJson, setCookiesJson] = useState("");
   const [usernames, setUsernames] = useState("");
@@ -75,14 +79,6 @@ export default function CookieExtractionPage() {
     }
   }, []);
 
-  const stopPollingAndReset = useCallback(() => {
-    clearPoll();
-    setPageState("idle");
-    sessionStorage.removeItem(STORAGE_RUN_ID);
-    runIdRef.current = null;
-    lastEventCountRef.current = 0;
-  }, [clearPoll]);
-
   const startPolling = useCallback(
     (id: string) => {
       lastEventCountRef.current = 0;
@@ -97,11 +93,7 @@ export default function CookieExtractionPage() {
         if (state.progress.length > lastEventCountRef.current) {
           const newEvents = state.progress.slice(lastEventCountRef.current) as ProgressEvent[];
           lastEventCountRef.current = state.progress.length;
-          setEvents((p) => {
-            const updated = [...p, ...newEvents];
-            sessionStorage.setItem(STORAGE_FORM, JSON.stringify({ cookiesJson, usernames, testMode }));
-            return updated;
-          });
+          setEvents((p) => [...p, ...newEvents]);
         }
         if (state.status !== "running") {
           clearPoll();
@@ -112,7 +104,7 @@ export default function CookieExtractionPage() {
         }
       }, 1000);
     },
-    [cookiesJson, usernames, testMode, clearPoll],
+    [clearPoll],
   );
 
   useEffect(() => {
@@ -124,19 +116,20 @@ export default function CookieExtractionPage() {
     if (!savedRunId) return;
 
     setPageState("restoring");
+
+    const savedForm = sessionStorage.getItem(STORAGE_FORM);
+    if (savedForm) {
+      try {
+        const parsed = JSON.parse(savedForm);
+        setCookiesJson(parsed.cookiesJson ?? "");
+        setUsernames(parsed.usernames ?? "");
+        setTestMode(parsed.testMode ?? false);
+      } catch {}
+    }
+
     let cancelled = false;
 
     (async () => {
-      const savedForm = sessionStorage.getItem(STORAGE_FORM);
-      if (savedForm) {
-        try {
-          const parsed = JSON.parse(savedForm);
-          setCookiesJson(parsed.cookiesJson ?? "");
-          setUsernames(parsed.usernames ?? "");
-          setTestMode(parsed.testMode ?? false);
-        } catch {}
-      }
-
       const state = await pollExtractionAction(savedRunId);
       if (cancelled) return;
 
@@ -204,18 +197,8 @@ export default function CookieExtractionPage() {
       return;
     }
 
-    if (testMode) {
-      setEvents([
-        {
-          type: "status",
-          message: `TEST MODE — fetching 2 pages per profile (${names.length} profiles total)`,
-          totalCount: names.length,
-        } as ProgressEvent,
-      ]);
-    }
-
+    saveFormState(cookiesJson, usernames, testMode);
     setPageState("running");
-    sessionStorage.setItem(STORAGE_FORM, JSON.stringify({ cookiesJson, usernames, testMode }));
 
     const result = await startCookieExtractionAction(cookiesJson.trim(), names, testMode ? 2 : undefined);
     if ("error" in result) {
@@ -294,20 +277,20 @@ export default function CookieExtractionPage() {
 
   return (
     <div className="space-y-6 p-6">
-      {/* ===== Reconnecting Banner ===== */}
       {pageState === "restoring" && !restoreFailed && (
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="flex items-center gap-3 pt-6">
             <RefreshCw className="h-5 w-5 animate-spin text-primary" />
             <div>
               <p className="text-sm font-medium">Reconnecting to extraction session...</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Verifying server state — you will not lose progress</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Verifying server state — you will not lose progress
+              </p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* ===== Session Lost Banner ===== */}
       {pageState === "restoring" && restoreFailed && (
         <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
           <CardContent className="flex items-center gap-3 pt-6">
@@ -325,7 +308,7 @@ export default function CookieExtractionPage() {
         </Card>
       )}
 
-      {/* ===== Form Card ===== */}
+      {/* ---- Form ---- */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -406,13 +389,17 @@ export default function CookieExtractionPage() {
                 {testMode ? "Run Test" : "Start Extraction"}
               </Button>
             )}
-            {(pageState === "running" || pageState === "restoring") && (
+            {active && (
               <>
                 <Button disabled>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   {pageState === "restoring" ? "Reconnecting..." : "Extracting..."}
                 </Button>
-                <Button variant="destructive" onClick={() => setShowStopModal(true)} disabled={pageState === "restoring"}>
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowStopModal(true)}
+                  disabled={pageState === "restoring"}
+                >
                   <Ban className="mr-2 h-4 w-4" />
                   Stop
                 </Button>
@@ -427,7 +414,7 @@ export default function CookieExtractionPage() {
                 {totalFollowers > 0 && (
                   <Button variant="outline" onClick={handleExportCSV}>
                     <Download className="mr-2 h-4 w-4" />
-                    Export CSV
+                    Export CSV ({totalFollowers})
                   </Button>
                 )}
               </>
@@ -436,13 +423,15 @@ export default function CookieExtractionPage() {
         </CardContent>
       </Card>
 
-      {/* ===== Progress / Results ===== */}
+      {/* ---- Progress ---- */}
       {showProgress && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               {pageState === "running" || pageState === "restoring" ? (
-                <RefreshCw className={`h-5 w-5 ${pageState === "running" ? "animate-spin text-primary" : "text-muted-foreground"}`} />
+                <RefreshCw
+                  className={`h-5 w-5 ${pageState === "running" ? "animate-spin text-primary" : "text-muted-foreground"}`}
+                />
               ) : (
                 <ClipboardPaste className="h-5 w-5" />
               )}
@@ -488,9 +477,7 @@ export default function CookieExtractionPage() {
               {pageState === "completed" && <CheckCircle className="h-4 w-4 text-green-500" />}
               <span>
                 {last?.profileUsername ? <span className="font-medium">@{last.profileUsername}</span> : null}{" "}
-                {pageState === "restoring"
-                  ? "Restoring previous session state..."
-                  : last?.message ?? ""}
+                {pageState === "restoring" ? "Restoring previous session state..." : (last?.message ?? "")}
                 {pageState === "completed" && !last?.message && "All profiles processed"}
                 {pageState === "stopped" && !last?.message && "Extraction was stopped by user"}
                 {pageState === "error" && !last?.message && "Extraction encountered an error"}

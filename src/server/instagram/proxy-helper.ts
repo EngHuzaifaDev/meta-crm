@@ -136,9 +136,7 @@ export async function proxyFetch(url: string, options: RequestInit = {}): Promis
   } catch (err: any) {
     const proxyHost = getProxyHost() || "unknown";
     if (err.message?.includes("407")) {
-      throw new Error(
-        `Proxy authentication failed (407) at ${proxyHost} — check PROXY_URL credentials`,
-      );
+      throw new Error(`Proxy authentication failed (407) at ${proxyHost} — check PROXY_URL credentials`);
     }
     throw new Error(`Proxy request failed: ${err.message} (proxy: ${proxyHost})`);
   }
