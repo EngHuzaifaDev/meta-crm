@@ -89,12 +89,7 @@ export default function CookieExtractionPage() {
             sessionStorage.removeItem(STORAGE_RUN_ID);
             return;
           }
-          setEvents((prev) => {
-            if (state.progress.length > prev.length) {
-              return [...prev, ...state.progress.slice(prev.length)];
-            }
-            return prev;
-          });
+          setEvents(state.progress as ProgressEvent[]);
           if (state.status !== "running") {
             clearPoll();
             sessionStorage.removeItem(STORAGE_RUN_ID);
