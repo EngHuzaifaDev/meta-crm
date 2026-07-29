@@ -7,7 +7,7 @@ import { getAuth } from "@/lib/auth";
 export async function startCookieExtractionAction(cookiesJson: string, usernames: string[], maxPages?: number) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized" };
+  if (!sesh) return { error: "Unauthorized" };
 
   let cookies: any[];
   try {
