@@ -60,6 +60,16 @@ export async function extractFollowersStreamFromCookies(
   let processedCount = 0;
   const totalCount = options.usernames.length;
 
+  const sharedState = () => ({
+    totalFollowers,
+    totalEstimatedFollowers,
+    invalidCount,
+    privateCount,
+    duplicateCount,
+    processedCount,
+    totalCount,
+  });
+
   try {
     const session = parseCookies(options.cookies);
     if (!session.csrftoken || !session.sessionid || !session.ds_user_id) {
@@ -78,8 +88,7 @@ export async function extractFollowersStreamFromCookies(
     await onProgress({
       type: "status",
       message: `Parsed session cookies successfully${hasProxy ? ` — proxy configured (${getProxyHost() ?? "unknown"})` : ""}`,
-      processedCount,
-      totalCount,
+      ...sharedState(),
     });
 
     const proxyCheck = await verifyProxyIP();
@@ -88,16 +97,14 @@ export async function extractFollowersStreamFromCookies(
       await onProgress({
         type: "status",
         message: `WARNING: Proxy verification failed — ${proxyCheck.error} — continuing anyway`,
-        processedCount,
-        totalCount,
+        ...sharedState(),
       });
     } else {
       logger.ok("Proxy", `Verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`);
       await onProgress({
         type: "status",
         message: `Proxy verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`,
-        processedCount,
-        totalCount,
+        ...sharedState(),
       });
     }
 
@@ -107,8 +114,7 @@ export async function extractFollowersStreamFromCookies(
     await onProgress({
       type: "status",
       message: `Starting extraction for ${totalCount} profiles`,
-      processedCount,
-      totalCount,
+      ...sharedState(),
     });
 
     for (let i = 0; i < options.usernames.length; i++) {
@@ -135,8 +141,7 @@ export async function extractFollowersStreamFromCookies(
         type: "status",
         profileUsername: targetUsername,
         message: `[${processedCount}/${totalCount}] Fetching followers for @${targetUsername}...`,
-        processedCount,
-        totalCount,
+        ...sharedState(),
       });
 
       let profilePicUrl = "";
@@ -177,9 +182,7 @@ export async function extractFollowersStreamFromCookies(
               page: gqlEvent.page,
               totalPages: gqlEvent.totalPages,
               estimatedTotal: gqlEvent.estimatedTotal,
-              totalEstimatedFollowers,
-              processedCount,
-              totalCount,
+              ...sharedState(),
             });
 
             if (gqlEvent.followerUsername) {
@@ -296,8 +299,7 @@ export async function extractFollowersStreamFromCookies(
             type: "status",
             profileUsername: targetUsername,
             message: `@${targetUsername}: API error — ${msg} — skipping`,
-            processedCount,
-            totalCount,
+            ...sharedState(),
           });
         }
         continue;
@@ -324,8 +326,7 @@ export async function extractFollowersStreamFromCookies(
         await onProgress({
           type: "status",
           message: "Waiting 3-5s before next profile to avoid detection...",
-          processedCount,
-          totalCount,
+          ...sharedState(),
         });
         await randomDelay();
       }

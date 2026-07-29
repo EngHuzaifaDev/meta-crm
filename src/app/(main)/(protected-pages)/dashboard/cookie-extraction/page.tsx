@@ -56,6 +56,7 @@ export default function CookieExtractionPage() {
   const [testMode, setTestMode] = useState(false);
   const [pageState, setPageState] = useState<PageState>("idle");
   const [events, setEvents] = useState<ProgressEvent[]>([]);
+  const [lastEvent, setLastEvent] = useState<ProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showStopModal, setShowStopModal] = useState(false);
   const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
@@ -90,6 +91,7 @@ export default function CookieExtractionPage() {
             return;
           }
           setEvents(state.progress as ProgressEvent[]);
+          if (state.lastEvent) setLastEvent(state.lastEvent as ProgressEvent);
           if (state.status !== "running") {
             clearPoll();
             sessionStorage.removeItem(STORAGE_RUN_ID);
@@ -139,6 +141,7 @@ export default function CookieExtractionPage() {
         return;
       }
 
+      if (state.lastEvent) setLastEvent(state.lastEvent as ProgressEvent);
       if (state.status === "running") {
         runIdRef.current = savedRunId;
         setEvents(state.progress as ProgressEvent[]);
@@ -168,6 +171,7 @@ export default function CookieExtractionPage() {
   const startExtraction = async () => {
     setError(null);
     setEvents([]);
+    setLastEvent(null);
     setRestoreFailed(false);
 
     if (!cookiesJson.trim()) {
@@ -247,21 +251,21 @@ export default function CookieExtractionPage() {
     clearPoll();
     setPageState("idle");
     setEvents([]);
+    setLastEvent(null);
     setError(null);
     setRestoreFailed(false);
     sessionStorage.removeItem(STORAGE_RUN_ID);
     runIdRef.current = null;
   };
 
-  const last = events[events.length - 1];
-  const done = last?.type === "done";
-  const totalFollowers = last?.totalFollowers ?? 0;
-  const totalEstimatedFollowers = last?.totalEstimatedFollowers ?? 0;
-  const invalidCount = last?.invalidCount ?? 0;
-  const privateCount = last?.privateCount ?? 0;
-  const duplicateCount = last?.duplicateCount ?? 0;
-  const processedCount = last?.processedCount ?? 0;
-  const totalCount = last?.totalCount ?? 0;
+  const done = lastEvent?.type === "done";
+  const totalFollowers = lastEvent?.totalFollowers ?? 0;
+  const totalEstimatedFollowers = lastEvent?.totalEstimatedFollowers ?? 0;
+  const invalidCount = lastEvent?.invalidCount ?? 0;
+  const privateCount = lastEvent?.privateCount ?? 0;
+  const duplicateCount = lastEvent?.duplicateCount ?? 0;
+  const processedCount = lastEvent?.processedCount ?? 0;
+  const totalCount = lastEvent?.totalCount ?? 0;
   const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
   const followerProgress =
     totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
@@ -471,11 +475,11 @@ export default function CookieExtractionPage() {
               {pageState === "error" && <AlertCircle className="h-4 w-4 text-destructive" />}
               {pageState === "completed" && <CheckCircle className="h-4 w-4 text-green-500" />}
               <span>
-                {last?.profileUsername ? <span className="font-medium">@{last.profileUsername}</span> : null}{" "}
-                {pageState === "restoring" ? "Restoring previous session state..." : (last?.message ?? "")}
-                {pageState === "completed" && !last?.message && "All profiles processed"}
-                {pageState === "stopped" && !last?.message && "Extraction was stopped by user"}
-                {pageState === "error" && !last?.message && "Extraction encountered an error"}
+                {lastEvent?.profileUsername ? <span className="font-medium">@{lastEvent.profileUsername}</span> : null}{" "}
+                {pageState === "restoring" ? "Restoring previous session state..." : (lastEvent?.message ?? "")}
+                {pageState === "completed" && !lastEvent?.message && "All profiles processed"}
+                {pageState === "stopped" && !lastEvent?.message && "Extraction was stopped by user"}
+                {pageState === "error" && !lastEvent?.message && "Extraction encountered an error"}
               </span>
             </div>
 
