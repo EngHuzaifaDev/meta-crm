@@ -11,8 +11,10 @@ import {
   Download,
   Loader2,
   Play,
+  RefreshCw,
   Terminal,
   Users,
+  WifiOff,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -39,21 +41,26 @@ interface ScrapedSource {
   isInvalid?: boolean;
 }
 
-const STORAGE_KEY = "cookieExtractionRunId";
+const STORAGE_RUN_ID = "cookieExtractionRunId";
+const STORAGE_FORM = "cookieExtractionForm";
+
+type PageState = "idle" | "restoring" | "running" | "completed" | "stopped" | "error";
 
 export default function CookieExtractionPage() {
   const [cookiesJson, setCookiesJson] = useState("");
   const [usernames, setUsernames] = useState("");
   const [testMode, setTestMode] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [pageState, setPageState] = useState<PageState>("idle");
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showStopModal, setShowStopModal] = useState(false);
   const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
+  const [restoreFailed, setRestoreFailed] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const eventsEndRef = useRef<HTMLDivElement | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const lastEventCountRef = useRef(0);
 
   useEffect(() => {
     getScrapedSourcesAction(50)
@@ -68,30 +75,44 @@ export default function CookieExtractionPage() {
     }
   }, []);
 
+  const stopPollingAndReset = useCallback(() => {
+    clearPoll();
+    setPageState("idle");
+    sessionStorage.removeItem(STORAGE_RUN_ID);
+    runIdRef.current = null;
+    lastEventCountRef.current = 0;
+  }, [clearPoll]);
+
   const startPolling = useCallback(
     (id: string) => {
-      let lastEventCount = 0;
+      lastEventCountRef.current = 0;
       pollRef.current = setInterval(async () => {
         const state = await pollExtractionAction(id);
         if (!state) {
           clearPoll();
-          setRunning(false);
-          sessionStorage.removeItem(STORAGE_KEY);
+          setPageState("idle");
+          sessionStorage.removeItem(STORAGE_RUN_ID);
           return;
         }
-        if (state.progress.length > lastEventCount) {
-          const newEvents = state.progress.slice(lastEventCount) as ProgressEvent[];
-          lastEventCount = state.progress.length;
-          setEvents((p) => [...p, ...newEvents]);
+        if (state.progress.length > lastEventCountRef.current) {
+          const newEvents = state.progress.slice(lastEventCountRef.current) as ProgressEvent[];
+          lastEventCountRef.current = state.progress.length;
+          setEvents((p) => {
+            const updated = [...p, ...newEvents];
+            sessionStorage.setItem(STORAGE_FORM, JSON.stringify({ cookiesJson, usernames, testMode }));
+            return updated;
+          });
         }
         if (state.status !== "running") {
           clearPoll();
-          setRunning(false);
-          sessionStorage.removeItem(STORAGE_KEY);
+          sessionStorage.removeItem(STORAGE_RUN_ID);
+          if (state.status === "done") setPageState("completed");
+          else if (state.status === "error") setPageState("error");
+          else if (state.status === "stopped") setPageState("stopped");
         }
       }, 1000);
     },
-    [clearPoll],
+    [cookiesJson, usernames, testMode, clearPoll],
   );
 
   useEffect(() => {
@@ -99,21 +120,56 @@ export default function CookieExtractionPage() {
   }, [events]);
 
   useEffect(() => {
-    const saved = sessionStorage.getItem(STORAGE_KEY);
-    if (!saved) return;
+    const savedRunId = sessionStorage.getItem(STORAGE_RUN_ID);
+    if (!savedRunId) return;
+
+    setPageState("restoring");
     let cancelled = false;
+
     (async () => {
-      const state = await pollExtractionAction(saved);
+      const savedForm = sessionStorage.getItem(STORAGE_FORM);
+      if (savedForm) {
+        try {
+          const parsed = JSON.parse(savedForm);
+          setCookiesJson(parsed.cookiesJson ?? "");
+          setUsernames(parsed.usernames ?? "");
+          setTestMode(parsed.testMode ?? false);
+        } catch {}
+      }
+
+      const state = await pollExtractionAction(savedRunId);
       if (cancelled) return;
-      if (!state || state.status !== "running") {
-        sessionStorage.removeItem(STORAGE_KEY);
+
+      if (!state) {
+        setRestoreFailed(true);
+        setTimeout(() => {
+          if (!cancelled) setPageState("idle");
+        }, 3000);
         return;
       }
-      runIdRef.current = saved;
-      setEvents(state.progress as ProgressEvent[]);
-      setRunning(true);
-      startPolling(saved);
+
+      if (state.status === "running") {
+        runIdRef.current = savedRunId;
+        lastEventCountRef.current = state.progress.length;
+        setEvents(state.progress as ProgressEvent[]);
+        setPageState("running");
+        startPolling(savedRunId);
+      } else {
+        lastEventCountRef.current = state.progress.length;
+        setEvents(state.progress as ProgressEvent[]);
+        if (state.status === "done") setPageState("completed");
+        else if (state.status === "error") setPageState("error");
+        else if (state.status === "stopped") setPageState("stopped");
+        else {
+          sessionStorage.removeItem(STORAGE_RUN_ID);
+          setRestoreFailed(true);
+          setTimeout(() => {
+            if (!cancelled) setPageState("idle");
+          }, 3000);
+        }
+      }
     })();
+
     return () => {
       cancelled = true;
       clearPoll();
@@ -123,6 +179,7 @@ export default function CookieExtractionPage() {
   const startExtraction = async () => {
     setError(null);
     setEvents([]);
+    setRestoreFailed(false);
 
     if (!cookiesJson.trim()) {
       setError("Paste your Instagram cookies JSON first");
@@ -157,17 +214,18 @@ export default function CookieExtractionPage() {
       ]);
     }
 
-    setRunning(true);
+    setPageState("running");
+    sessionStorage.setItem(STORAGE_FORM, JSON.stringify({ cookiesJson, usernames, testMode }));
 
     const result = await startCookieExtractionAction(cookiesJson.trim(), names, testMode ? 2 : undefined);
     if ("error" in result) {
       setError(result.error as string);
-      setRunning(false);
+      setPageState("idle");
       return;
     }
 
     runIdRef.current = result.runId;
-    sessionStorage.setItem(STORAGE_KEY, result.runId);
+    sessionStorage.setItem(STORAGE_RUN_ID, result.runId);
     startPolling(result.runId);
   };
 
@@ -175,7 +233,7 @@ export default function CookieExtractionPage() {
     if (runIdRef.current) {
       await stopExtractionAction(runIdRef.current);
     }
-    sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STORAGE_RUN_ID);
     setShowStopModal(false);
   };
 
@@ -206,6 +264,17 @@ export default function CookieExtractionPage() {
     });
   };
 
+  const handleReset = () => {
+    clearPoll();
+    setPageState("idle");
+    setEvents([]);
+    setError(null);
+    setRestoreFailed(false);
+    sessionStorage.removeItem(STORAGE_RUN_ID);
+    runIdRef.current = null;
+    lastEventCountRef.current = 0;
+  };
+
   const last = events[events.length - 1];
   const done = last?.type === "done";
   const totalFollowers = last?.totalFollowers ?? 0;
@@ -218,11 +287,45 @@ export default function CookieExtractionPage() {
   const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
   const followerProgress =
     totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
-
   const sessionReqCount = events.filter((e) => e.type === "follower").length;
+
+  const active = pageState === "running" || pageState === "restoring";
+  const showProgress = pageState !== "idle" || events.length > 0;
 
   return (
     <div className="space-y-6 p-6">
+      {/* ===== Reconnecting Banner ===== */}
+      {pageState === "restoring" && !restoreFailed && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex items-center gap-3 pt-6">
+            <RefreshCw className="h-5 w-5 animate-spin text-primary" />
+            <div>
+              <p className="text-sm font-medium">Reconnecting to extraction session...</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Verifying server state — you will not lose progress</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ===== Session Lost Banner ===== */}
+      {pageState === "restoring" && restoreFailed && (
+        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="flex items-center gap-3 pt-6">
+            <WifiOff className="h-5 w-5 text-amber-600" />
+            <div>
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                Previous session was lost (server restarted)
+              </p>
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+                Your form inputs are saved — review and start again. Any followers already scraped remain in the
+                database.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ===== Form Card ===== */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -242,7 +345,7 @@ export default function CookieExtractionPage() {
               placeholder='[{"domain":".instagram.com","name":"csrftoken","value":"...", ...}]'
               value={cookiesJson}
               onChange={(e) => setCookiesJson(e.target.value)}
-              disabled={running}
+              disabled={active}
             />
           </div>
 
@@ -257,11 +360,10 @@ export default function CookieExtractionPage() {
               placeholder={["target_user1", "target_user2"].join("\n")}
               value={usernames}
               onChange={(e) => setUsernames(e.target.value)}
-              disabled={running}
+              disabled={active}
             />
           </div>
 
-          {/* Previously scraped sources */}
           {scrapedSources.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-xs text-muted-foreground font-medium">Previously extracted — click to add</p>
@@ -270,7 +372,7 @@ export default function CookieExtractionPage() {
                   <button
                     key={s.profileUsername}
                     type="button"
-                    disabled={running || s.isPrivate || s.isInvalid}
+                    disabled={active || s.isPrivate || s.isInvalid}
                     onClick={() => handleExtractSource(s.profileUsername)}
                     className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs hover:bg-muted transition-colors disabled:opacity-40"
                   >
@@ -287,7 +389,7 @@ export default function CookieExtractionPage() {
               id="test-mode"
               checked={testMode}
               onCheckedChange={(v) => setTestMode(v === true)}
-              disabled={running}
+              disabled={active}
             />
             <Label htmlFor="test-mode" className="flex items-center gap-1.5 cursor-pointer">
               <Bug className="h-3.5 w-3.5" />
@@ -298,65 +400,62 @@ export default function CookieExtractionPage() {
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           <div className="flex gap-2">
-            <Button onClick={startExtraction} disabled={running}>
-              {running ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Extracting...
-                </>
-              ) : (
-                <>
-                  <Play className="mr-2 h-4 w-4" />
-                  {testMode ? "Run Test" : "Start Extraction"}
-                </>
-              )}
-            </Button>
-            {running && (
-              <Button variant="destructive" onClick={() => setShowStopModal(true)}>
-                <Ban className="mr-2 h-4 w-4" />
-                Stop
+            {pageState === "idle" && (
+              <Button onClick={startExtraction}>
+                <Play className="mr-2 h-4 w-4" />
+                {testMode ? "Run Test" : "Start Extraction"}
               </Button>
             )}
-            {!running && totalFollowers > 0 && (
-              <Button variant="outline" onClick={handleExportCSV}>
-                <Download className="mr-2 h-4 w-4" />
-                Export CSV
-              </Button>
+            {(pageState === "running" || pageState === "restoring") && (
+              <>
+                <Button disabled>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {pageState === "restoring" ? "Reconnecting..." : "Extracting..."}
+                </Button>
+                <Button variant="destructive" onClick={() => setShowStopModal(true)} disabled={pageState === "restoring"}>
+                  <Ban className="mr-2 h-4 w-4" />
+                  Stop
+                </Button>
+              </>
+            )}
+            {(pageState === "completed" || pageState === "stopped" || pageState === "error") && (
+              <>
+                <Button variant="outline" onClick={handleReset}>
+                  <Play className="mr-2 h-4 w-4" />
+                  Start New Extraction
+                </Button>
+                {totalFollowers > 0 && (
+                  <Button variant="outline" onClick={handleExportCSV}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Export CSV
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </CardContent>
       </Card>
 
-      {/* Session Progress */}
-      {running && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Terminal className="h-4 w-4" />
-              Session Progress
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-3 text-sm">
-              <span className="text-muted-foreground">Requests made:</span>
-              <Badge variant="secondary">{sessionReqCount}</Badge>
-              {last?.message && <span className="text-muted-foreground text-xs truncate">{last.message}</span>}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Events */}
-      {events.length > 0 && (
+      {/* ===== Progress / Results ===== */}
+      {showProgress && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <ClipboardPaste className="h-5 w-5" />
-              Progress
+              {pageState === "running" || pageState === "restoring" ? (
+                <RefreshCw className={`h-5 w-5 ${pageState === "running" ? "animate-spin text-primary" : "text-muted-foreground"}`} />
+              ) : (
+                <ClipboardPaste className="h-5 w-5" />
+              )}
+              {pageState === "restoring" && "Reconnecting..."}
+              {pageState === "running" && "Extraction Progress"}
+              {pageState === "completed" && "Extraction Complete"}
+              {pageState === "stopped" && "Extraction Stopped"}
+              {pageState === "error" && "Extraction Failed"}
+              {pageState === "idle" && "Progress"}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {running && totalCount > 0 && (
+            {(pageState === "running" || pageState === "restoring") && totalCount > 0 && (
               <div className="space-y-3">
                 <div>
                   <div className="flex justify-between text-muted-foreground text-xs mb-1">
@@ -381,15 +480,22 @@ export default function CookieExtractionPage() {
               </div>
             )}
 
-            {last?.message && (
-              <div className="flex items-center gap-2 text-sm">
-                {running && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                <span>
-                  {last.profileUsername ? <span className="font-medium">@{last.profileUsername}</span> : null}{" "}
-                  {last.message}
-                </span>
-              </div>
-            )}
+            <div className="flex items-center gap-2 text-sm">
+              {pageState === "running" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+              {pageState === "restoring" && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+              {pageState === "stopped" && <Ban className="h-4 w-4 text-orange-500" />}
+              {pageState === "error" && <AlertCircle className="h-4 w-4 text-destructive" />}
+              {pageState === "completed" && <CheckCircle className="h-4 w-4 text-green-500" />}
+              <span>
+                {last?.profileUsername ? <span className="font-medium">@{last.profileUsername}</span> : null}{" "}
+                {pageState === "restoring"
+                  ? "Restoring previous session state..."
+                  : last?.message ?? ""}
+                {pageState === "completed" && !last?.message && "All profiles processed"}
+                {pageState === "stopped" && !last?.message && "Extraction was stopped by user"}
+                {pageState === "error" && !last?.message && "Extraction encountered an error"}
+              </span>
+            </div>
 
             <div className="flex flex-wrap gap-3">
               <Badge variant="secondary" className="gap-1 text-sm">
@@ -410,6 +516,12 @@ export default function CookieExtractionPage() {
                 <Badge className="gap-1 bg-green-600 text-sm">
                   <CheckCircle className="h-3.5 w-3.5" />
                   Complete
+                </Badge>
+              )}
+              {pageState === "running" && (
+                <Badge variant="secondary" className="gap-1 text-xs">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  {sessionReqCount} requests
                 </Badge>
               )}
             </div>
@@ -439,6 +551,13 @@ export default function CookieExtractionPage() {
               ))}
               <div ref={eventsEndRef} />
             </div>
+
+            {pageState === "running" && (
+              <p className="text-xs text-muted-foreground flex items-center gap-1">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+                Auto-refreshing every second
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
