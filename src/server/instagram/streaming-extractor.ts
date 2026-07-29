@@ -1,21 +1,20 @@
 import {
-  getExistingFollowerUsernames,
-  isProfileAlreadyScraped,
+  bulkUpsertFollowers,
   markProfileInvalid,
   markProfilePrivate,
   updateTargetProfileScraped,
-  upsertFollower,
 } from "@/lib/db/utils/instagram";
 
 import type { CookieObject } from "./cookie-session";
 import { buildInstagramHeaders, parseCookies } from "./cookie-session";
 import { extractFollowersFromCookies } from "./graphql-extractor";
+import { logger } from "./logger";
 import { getRunState } from "./progress-store";
 import { getProxyHost, getProxyUrl, verifyProxyIP } from "./proxy-helper";
-import { logger } from "./logger";
 
 const MIN_DELAY_MS = 2000;
 const MAX_DELAY_MS = 5000;
+const BATCH_SIZE = 500;
 
 function randomDelay(): Promise<void> {
   const ms = MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS);
@@ -65,18 +64,18 @@ export async function extractFollowersStreamFromCookies(
   try {
     const session = parseCookies(options.cookies);
     if (!session.csrftoken || !session.sessionid || !session.ds_user_id) {
-      logger.error("Session", "Missing required cookies: csrftoken, sessionid, ds_user_id")
+      logger.error("Session", "Missing required cookies: csrftoken, sessionid, ds_user_id");
       await onProgress({
         type: "error",
         error: "Missing required cookies: csrftoken, sessionid, ds_user_id",
       });
       return;
     }
-    logger.ok("Session", `Cookies parsed — user_id=${session.ds_user_id}`)
+    logger.ok("Session", `Cookies parsed — user_id=${session.ds_user_id}`);
 
     const hasProxy = !!getProxyUrl();
-    const proxyHost = getProxyHost() ?? "none"
-    logger.info("Proxy", hasProxy ? `Configured — ${proxyHost}` : "Not configured")
+    const proxyHost = getProxyHost() ?? "none";
+    logger.info("Proxy", hasProxy ? `Configured — ${proxyHost}` : "Not configured");
     await onProgress({
       type: "status",
       message: `Parsed session cookies successfully${hasProxy ? ` — proxy configured (${getProxyHost() ?? "unknown"})` : ""}`,
@@ -86,7 +85,7 @@ export async function extractFollowersStreamFromCookies(
 
     const proxyCheck = await verifyProxyIP();
     if (!proxyCheck.ok) {
-      logger.warn("Proxy", `Verification failed — ${proxyCheck.error}`)
+      logger.warn("Proxy", `Verification failed — ${proxyCheck.error}`);
       await onProgress({
         type: "status",
         message: `WARNING: Proxy verification failed — ${proxyCheck.error} — continuing anyway`,
@@ -94,7 +93,7 @@ export async function extractFollowersStreamFromCookies(
         totalCount,
       });
     } else {
-      logger.ok("Proxy", `Verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`)
+      logger.ok("Proxy", `Verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`);
       await onProgress({
         type: "status",
         message: `Proxy verified — IP: ${proxyCheck.ip}${proxyCheck.region ? ` (${proxyCheck.region})` : ""}`,
@@ -105,7 +104,7 @@ export async function extractFollowersStreamFromCookies(
 
     const headers = buildInstagramHeaders(session, options.cookies);
 
-    logger.info("Extraction", `Starting — ${totalCount} profiles`)
+    logger.info("Extraction", `Starting — ${totalCount} profiles`);
     await onProgress({
       type: "status",
       message: `Starting extraction for ${totalCount} profiles`,
@@ -132,20 +131,7 @@ export async function extractFollowersStreamFromCookies(
       const targetUsername = options.usernames[i];
       processedCount = i + 1;
 
-      const alreadyScraped = await isProfileAlreadyScraped(targetUsername);
-      if (alreadyScraped) {
-        logger.info(targetUsername, "Already scraped — skipped")
-        await onProgress({
-          type: "skipped",
-          profileUsername: targetUsername,
-          message: `@${targetUsername} already scraped — skipping`,
-          processedCount,
-          totalCount,
-        });
-        continue;
-      }
-
-      logger.info(targetUsername, `[${processedCount}/${totalCount}] Fetching followers...`)
+      logger.info(targetUsername, `[${processedCount}/${totalCount}] Fetching followers...`);
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
@@ -156,9 +142,20 @@ export async function extractFollowersStreamFromCookies(
 
       let profilePicUrl = "";
       let extractedCount = 0;
+      let newInsertCount = 0;
 
       try {
-        const existingFollowers = await getExistingFollowerUsernames(targetUsername);
+        const sessionSet = new Set<string>();
+        let batch: Array<{ followerUsername: string; avatarUrl?: string }> = [];
+
+        const flushBatch = async () => {
+          if (batch.length === 0) return;
+          const result = await bulkUpsertFollowers(targetUsername, batch);
+          newInsertCount += result.upserted;
+          duplicateCount += result.matched;
+          totalFollowers += batch.length;
+          batch = [];
+        };
 
         const result = await extractFollowersFromCookies(
           {
@@ -185,23 +182,21 @@ export async function extractFollowersStreamFromCookies(
               totalCount,
             });
 
-              if (gqlEvent.followerUsername) {
-                const username = gqlEvent.followerUsername;
-                if (existingFollowers.has(username)) {
-                  duplicateCount++;
-                  logger.debug(targetUsername, `Duplicate: ${username}`)
-                } else {
-                existingFollowers.add(username);
-                await upsertFollower(targetUsername, username, undefined, gqlEvent.avatarUrl);
-                extractedCount++;
-                totalFollowers++;
+            if (gqlEvent.followerUsername) {
+              const username = gqlEvent.followerUsername;
+              if (sessionSet.has(username)) {
+                duplicateCount++;
+              } else {
+                sessionSet.add(username);
+                batch.push({ followerUsername: username, avatarUrl: gqlEvent.avatarUrl });
+                if (batch.length >= BATCH_SIZE) await flushBatch();
               }
 
               await onProgress({
                 type: "follower",
                 profileUsername: targetUsername,
                 followerUsername: username,
-                count: extractedCount,
+                count: sessionSet.size,
                 totalFollowers,
                 totalEstimatedFollowers,
                 duplicateCount,
@@ -212,6 +207,10 @@ export async function extractFollowersStreamFromCookies(
             }
           },
         );
+
+        await flushBatch();
+        extractedCount = sessionSet.size;
+        logger.info(targetUsername, `New inserts: ${newInsertCount}, total unique: ${extractedCount}`);
 
         if (result.isPrivate) {
           await markProfilePrivate(targetUsername);
@@ -230,9 +229,9 @@ export async function extractFollowersStreamFromCookies(
         profilePicUrl = result.profilePicUrl;
 
         if (extractedCount > 0) {
-          logger.ok(targetUsername, `${extractedCount} followers extracted`)
+          logger.ok(targetUsername, `${extractedCount} followers (${newInsertCount} new, ${duplicateCount} existing)`);
         } else {
-          logger.info(targetUsername, "No new followers found")
+          logger.info(targetUsername, "No followers found for this profile");
         }
         await onProgress({
           type: "follower",
@@ -264,7 +263,7 @@ export async function extractFollowersStreamFromCookies(
         }
 
         if (msg.includes("SESSION_EXPIRED")) {
-          logger.error(targetUsername, "Session expired — need fresh cookies")
+          logger.error(targetUsername, "Session expired — need fresh cookies");
           await onProgress({
             type: "error",
             error: "Session expired — provide fresh cookies",
@@ -275,7 +274,7 @@ export async function extractFollowersStreamFromCookies(
         }
 
         if (msg.includes("PROFILE_NOT_FOUND")) {
-          logger.warn(targetUsername, "Profile not found")
+          logger.warn(targetUsername, "Profile not found");
           await markProfileInvalid(targetUsername);
           invalidCount++;
           await onProgress({
@@ -287,7 +286,7 @@ export async function extractFollowersStreamFromCookies(
             totalCount,
           });
         } else {
-          logger.error(targetUsername, `API error — ${msg}`)
+          logger.error(targetUsername, `API error — ${msg}`);
           await onProgress({
             type: "status",
             profileUsername: targetUsername,
@@ -301,7 +300,10 @@ export async function extractFollowersStreamFromCookies(
 
       await updateTargetProfileScraped(targetUsername, extractedCount, profilePicUrl);
 
-      logger.ok(targetUsername, `Done — ${extractedCount} followers (${duplicateCount} dupes, ${invalidCount} invalid)`)
+      logger.ok(
+        targetUsername,
+        `Done — ${extractedCount} followers (${newInsertCount} new, ${duplicateCount} existing, ${invalidCount} invalid)`,
+      );
       await onProgress({
         type: "status",
         profileUsername: targetUsername,
@@ -324,7 +326,10 @@ export async function extractFollowersStreamFromCookies(
       }
     }
 
-    logger.ok("Extraction", `Complete — ${totalFollowers} followers, ${invalidCount} invalid, ${privateCount} private, ${duplicateCount} dupes`)
+    logger.ok(
+      "Extraction",
+      `Complete — ${totalFollowers} followers, ${invalidCount} invalid, ${privateCount} private, ${duplicateCount} dupes`,
+    );
     await onProgress({
       type: "done",
       message: "Extraction complete",
@@ -337,7 +342,7 @@ export async function extractFollowersStreamFromCookies(
       totalCount,
     });
   } catch (error: any) {
-    logger.error("Extraction", `Fatal: ${error.message || "Unknown"}`)
+    logger.error("Extraction", `Fatal: ${error.message || "Unknown"}`);
     await onProgress({
       type: "error",
       error: error.message || "Unknown error during extraction",

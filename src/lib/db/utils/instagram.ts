@@ -29,6 +29,7 @@ async function ensureFollowersIndexes(col: Collection<InstagramFollowerRecord>):
   await col.createIndex({ sourceProfileUsername: 1, lastSeenAt: -1 }, { background: true });
   await col.createIndex({ lastSeenAt: -1 }, { background: true });
   await col.createIndex({ sourceProfileUsername: 1 }, { background: true });
+  await col.createIndex({ followerUsername: 1 }, { background: true });
 }
 
 export async function addTargetProfile(data: {
@@ -72,6 +73,31 @@ export async function upsertFollower(
     { $set, $inc: { appearanceCount: 1 }, $setOnInsert: { firstSeenAt: new Date() } },
     { upsert: true },
   );
+}
+
+export async function bulkUpsertFollowers(
+  sourceProfileUsername: string,
+  followers: Array<{ followerUsername: string; displayName?: string; avatarUrl?: string }>,
+): Promise<{ upserted: number; matched: number }> {
+  const col = await getFollowersCol();
+  const now = new Date();
+  const ops = followers.map((f) => ({
+    updateOne: {
+      filter: { sourceProfileUsername, followerUsername: f.followerUsername },
+      update: {
+        $set: {
+          lastSeenAt: now,
+          ...(f.displayName !== undefined && { followerDisplayName: f.displayName }),
+          ...(f.avatarUrl !== undefined && { followerAvatarUrl: f.avatarUrl }),
+        },
+        $inc: { appearanceCount: 1 },
+        $setOnInsert: { firstSeenAt: now },
+      },
+      upsert: true,
+    },
+  }));
+  const result = await col.bulkWrite(ops, { ordered: false });
+  return { upserted: result.upsertedCount, matched: result.matchedCount };
 }
 
 export async function getFollowersForProfile(profileUsername: string): Promise<InstagramFollowerRecord[]> {
