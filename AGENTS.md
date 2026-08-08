@@ -84,6 +84,16 @@ Required (from `.env.example`):
 - Theme presets are generated from CSS files — run `npm run generate:presets` after editing presets
 - The project also contains a lead qualification AI pipeline (Groq SDK) — not typically impacted by Instagram work
 
+## Skills & Agents
+- **Skills** are installed in `.agents/skills/` (registered via `opencode.json` → `skills.paths`; lock file `skills-lock.json` tracks sources/hashes for `npx skills`):
+  - `ponytail` — minimalist engineering (lazy-but-correct default; intensity lite/full/ultra)
+  - `ui-ux-pro-max` — component/work-screen design workflow
+  - `shadcn` — shadcn/ui conventions, registry, variants
+  - `web-design-guidelines` — layout, hierarchy, typography, spacing
+  - Load the relevant one per task (e.g. `shadcn` + `ui-ux-pro-max` for component work, `ponytail` on any coding task).
+- **Subagents** in `.opencode/agent/`: `ui` (src/components + src/app + theming), `data-access` (src/lib/db), `instagram-extraction` (src/server/instagram), `server-actions` (src/server/server-actions.ts), `code-reviewer` (pre-merge review). Delegate layer-specific work to them.
+- Restart opencode after changing `opencode.json`, `.opencode/agent/*.md`, or `.agents/skills/**` — config loads only at startup.
+
 ## Work State
 ### Completed
 - **Branch flow**: `fix/build-time-issues` → `c-r-2` (fast-forward merged) → `fix/serialize-mongodb-objectid-for-client` (current)
