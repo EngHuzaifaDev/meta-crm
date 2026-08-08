@@ -81,12 +81,6 @@ export default function CookieExtractionPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if ((pageState === "completed" || pageState === "stopped" || pageState === "error") && (knownIssues > 0 || unexpectedErrors > 0)) {
-      setShowIssuesModal(true);
-    }
-  }, [pageState, knownIssues, unexpectedErrors]);
-
   const startPolling = useCallback(
     (id: string) => {
       pollRef.current = setInterval(async () => {
@@ -286,6 +280,12 @@ export default function CookieExtractionPage() {
 
   const active = pageState === "running" || pageState === "restoring";
   const showProgress = pageState !== "idle" || events.length > 0;
+
+  useEffect(() => {
+    if ((pageState === "completed" || pageState === "stopped" || pageState === "error") && (knownIssues > 0 || unexpectedErrors > 0)) {
+      setShowIssuesModal(true);
+    }
+  }, [pageState, knownIssues, unexpectedErrors]);
 
   return (
     <div className="space-y-6 p-6">
