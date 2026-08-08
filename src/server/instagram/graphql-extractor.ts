@@ -48,6 +48,39 @@ async function parseGraphQLResponse(data: any): Promise<GraphQLPageResult> {
   };
 }
 
+const MOBILE_IG_APP_ID = "567067343352427";
+const SCHEMA_REMOVED_RE = /laser\.provider|You cannot use this schema|has been deleted/i;
+
+export async function resolveProfileInfoMobile(
+  username: string,
+  headers: Record<string, string>,
+): Promise<ProfileInfo> {
+  logger.warn(username, "web_profile_info schema removed — falling back to mobile usernameinfo endpoint")
+  const url = `https://i.instagram.com/api/v1/users/${encodeURIComponent(username)}/usernameinfo/`;
+  const response = await proxyFetch(url, { method: "GET", headers: { ...headers, "x-ig-app-id": MOBILE_IG_APP_ID } });
+  if (response.status === 404) throw new Error("PROFILE_NOT_FOUND");
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Instagram API error (${response.status}): ${body.slice(0, 200)}`);
+  }
+  const body = await response.text();
+  let parsed: any;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    throw new Error(`Profile info (mobile): non-JSON response (${response.status}): ${body.slice(0, 300)}`);
+  }
+  const user = parsed?.user;
+  if (!user) {
+    throw new Error(`Profile info (mobile): unexpected structure: ${body.slice(0, 300)}`);
+  }
+  return {
+    id: String(user.pk ?? user.id),
+    isPrivate: !!user.is_private,
+    profilePicUrl: user.profile_pic_url || user.profile_pic_url_hd || "",
+  };
+}
+
 export async function resolveProfileInfoFromCookies(
   username: string,
   headers: Record<string, string>,
@@ -58,6 +91,9 @@ export async function resolveProfileInfoFromCookies(
   if (response.status === 404) throw new Error("PROFILE_NOT_FOUND");
   if (!response.ok) {
     const body = await response.text();
+    if (response.status === 400 && SCHEMA_REMOVED_RE.test(body)) {
+      return resolveProfileInfoMobile(username, headers);
+    }
     throw new Error(`Instagram API error (${response.status}): ${body.slice(0, 200)}`);
   }
   const body = await response.text();
@@ -97,9 +133,9 @@ export async function fetchFollowersPageFromCookies(
     }
   }
 
-  if (response.status === 429 || response.status === 400) {
+  if (response.status === 429) {
     const body = await response.text();
-    throw new Error(`RATE_LIMITED: Instagram returned ${response.status} — ${body.slice(0, 200)}`);
+    throw new Error(`RATE_LIMITED: Instagram returned 429 — ${body.slice(0, 200)}`);
   }
 
   if (!response.ok) {

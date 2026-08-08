@@ -15,6 +15,8 @@ import { getProxyHost, getProxyUrl, verifyProxyIP } from "./proxy-helper";
 const MIN_DELAY_MS = 2000;
 const MAX_DELAY_MS = 5000;
 
+const SCHEMA_REMOVED_RE = /laser\.provider|You cannot use this schema|has been deleted/i;
+
 function randomDelay(): Promise<void> {
   const ms = MIN_DELAY_MS + Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS);
   return new Promise((r) => setTimeout(r, ms));
@@ -30,6 +32,7 @@ export interface ProgressEvent {
   invalidCount?: number;
   privateCount?: number;
   duplicateCount?: number;
+  skippedCount?: number;
   processedCount?: number;
   totalCount?: number;
   error?: string;
@@ -37,6 +40,7 @@ export interface ProgressEvent {
   totalPages?: number;
   estimatedTotal?: number;
   totalEstimatedFollowers?: number;
+  kind?: "known" | "unknown";
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void | Promise<void>;
@@ -57,6 +61,7 @@ export async function extractFollowersStreamFromCookies(
   let invalidCount = 0;
   let privateCount = 0;
   let duplicateCount = 0;
+  let skippedCount = 0;
   let processedCount = 0;
   const totalCount = options.usernames.length;
 
@@ -66,6 +71,7 @@ export async function extractFollowersStreamFromCookies(
     invalidCount,
     privateCount,
     duplicateCount,
+    skippedCount,
     processedCount,
     totalCount,
   });
@@ -127,6 +133,7 @@ export async function extractFollowersStreamFromCookies(
           invalidCount,
           privateCount,
           duplicateCount,
+          skippedCount,
           processedCount,
           totalCount,
         });
@@ -264,6 +271,7 @@ export async function extractFollowersStreamFromCookies(
             invalidCount,
             privateCount,
             duplicateCount,
+            skippedCount,
             processedCount,
             totalCount,
           });
@@ -293,10 +301,23 @@ export async function extractFollowersStreamFromCookies(
             processedCount,
             totalCount,
           });
+        } else if (SCHEMA_REMOVED_RE.test(msg)) {
+          skippedCount++;
+          logger.warn(targetUsername, `Known IG schema issue — ${msg}`);
+          await onProgress({
+            type: "skipped",
+            kind: "known",
+            profileUsername: targetUsername,
+            message: `@${targetUsername}: Instagram removed a profile-info schema for this account (known issue) — skipped, other profiles continue`,
+            skippedCount,
+            processedCount,
+            totalCount,
+          });
         } else {
           logger.error(targetUsername, `API error — ${msg}`);
           await onProgress({
             type: "status",
+            kind: "unknown",
             profileUsername: targetUsername,
             message: `@${targetUsername}: API error — ${msg} — skipping`,
             ...sharedState(),
@@ -334,7 +355,7 @@ export async function extractFollowersStreamFromCookies(
 
     logger.ok(
       "Extraction",
-      `Complete — ${totalFollowers} followers, ${invalidCount} invalid, ${privateCount} private, ${duplicateCount} dupes`,
+      `Complete — ${totalFollowers} followers, ${invalidCount} invalid, ${privateCount} private, ${duplicateCount} dupes, ${skippedCount} skipped`,
     );
     await onProgress({
       type: "done",
@@ -344,6 +365,7 @@ export async function extractFollowersStreamFromCookies(
       invalidCount,
       privateCount,
       duplicateCount,
+      skippedCount,
       processedCount,
       totalCount,
     });

@@ -9,6 +9,7 @@ import {
   CheckCircle,
   ClipboardPaste,
   Download,
+  Info,
   Loader2,
   Play,
   RefreshCw,
@@ -59,6 +60,7 @@ export default function CookieExtractionPage() {
   const [lastEvent, setLastEvent] = useState<ProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showStopModal, setShowStopModal] = useState(false);
+  const [showIssuesModal, setShowIssuesModal] = useState(false);
   const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
   const [restoreFailed, setRestoreFailed] = useState(false);
 
@@ -78,6 +80,12 @@ export default function CookieExtractionPage() {
       pollRef.current = null;
     }
   }, []);
+
+  useEffect(() => {
+    if ((pageState === "completed" || pageState === "stopped" || pageState === "error") && (knownIssues > 0 || unexpectedErrors > 0)) {
+      setShowIssuesModal(true);
+    }
+  }, [pageState, knownIssues, unexpectedErrors]);
 
   const startPolling = useCallback(
     (id: string) => {
@@ -254,6 +262,7 @@ export default function CookieExtractionPage() {
     setLastEvent(null);
     setError(null);
     setRestoreFailed(false);
+    setShowIssuesModal(false);
     sessionStorage.removeItem(STORAGE_RUN_ID);
     runIdRef.current = null;
   };
@@ -264,6 +273,10 @@ export default function CookieExtractionPage() {
   const invalidCount = lastEvent?.invalidCount ?? 0;
   const privateCount = lastEvent?.privateCount ?? 0;
   const duplicateCount = lastEvent?.duplicateCount ?? 0;
+  const knownIssues = events.filter((e) => e.kind === "known").length;
+  const unexpectedErrors = events.filter((e) => e.kind === "unknown").length;
+  const isDev = process.env.NODE_ENV === "development";
+  const consoleEvents = isDev ? events : events.filter((e) => e.type !== "follower");
   const processedCount = lastEvent?.processedCount ?? 0;
   const totalCount = lastEvent?.totalCount ?? 0;
   const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
@@ -513,7 +526,7 @@ export default function CookieExtractionPage() {
             </div>
 
             <div className="max-h-[200px] overflow-y-auto space-y-0.5 text-xs font-mono text-muted-foreground border rounded p-2">
-              {events.map((ev, i) => (
+              {consoleEvents.map((ev, i) => (
                 <div key={i} className="flex gap-2">
                   <span className="shrink-0 w-6 opacity-50">{i + 1}</span>
                   <span
@@ -526,9 +539,11 @@ export default function CookieExtractionPage() {
                             ? "text-orange-500"
                             : ev.type === "invalid"
                               ? "text-amber-500"
-                              : ev.type === "follower"
-                                ? "text-blue-400"
-                                : ""
+                              : ev.type === "skipped"
+                                ? "text-sky-500 italic"
+                                : ev.type === "follower"
+                                  ? "text-blue-400"
+                                  : ""
                     }
                   >
                     {ev.type === "follower" ? `+ ${ev.followerUsername}` : ev.message || ev.error || ""}
@@ -546,6 +561,55 @@ export default function CookieExtractionPage() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Issues Modal */}
+      {showIssuesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <Card className="w-full max-w-md mx-4">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Info className="h-5 w-5 text-sky-500" />
+                Extraction finished with issues
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                {totalFollowers} followers scraped, but some profiles could not be processed.
+              </p>
+              {knownIssues > 0 && (
+                <div className="rounded-md border border-sky-300/50 bg-sky-50 p-3 space-y-1 dark:bg-sky-950/20">
+                  <p className="text-sm font-medium text-sky-700 flex items-center gap-2 dark:text-sky-300">
+                    <Info className="h-4 w-4" />
+                    {knownIssues} profile{knownIssues !== 1 ? "s" : ""} skipped — known Instagram-side issue
+                  </p>
+                  <p className="text-xs text-sky-600 dark:text-sky-400">
+                    Instagram removed the profile-info schema for business/creator accounts. This is a known change on
+                    Instagram's side, not a failure of the extraction — other profiles were unaffected. Retry these later
+                    with fresh cookies.
+                  </p>
+                </div>
+              )}
+              {unexpectedErrors > 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-1">
+                  <p className="text-sm font-medium text-destructive flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4" />
+                    {unexpectedErrors} unexpected error{unexpectedErrors !== 1 ? "s" : ""}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    These are not explained by known Instagram behavior. Likely causes: expired session, proxy/IP flagged,
+                    or a rate limit. Check the logs and re-run with fresh cookies.
+                  </p>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowIssuesModal(false)}>
+                  Got it
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Stop Confirmation Modal */}
