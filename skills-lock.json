@@ -24,6 +24,12 @@
       "sourceType": "github",
       "skillPath": "skills/web-design-guidelines/SKILL.md",
       "computedHash": "65a2e7d85753383ae0f88df15475d58b9e39723e9c4bb6891421d6144a85f79c"
+    },
+    "i-have-adhd": {
+      "source": "ayghri/i-have-adhd",
+      "sourceType": "github",
+      "skillPath": "skills/i-have-adhd/SKILL.md",
+      "computedHash": "b7a01828f58910ed69a5cad45a79fd618c68a339715df0d09a329eead19ef829"
     }
   }
 }
