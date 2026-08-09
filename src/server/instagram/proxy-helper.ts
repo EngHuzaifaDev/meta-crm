@@ -123,7 +123,11 @@ export async function proxyFetch(url: string, options: RequestInit = {}): Promis
   }
 
   try {
-    const { statusCode, body } = await undiciRequest(url, {
+    const {
+      statusCode,
+      body,
+      headers: respHeaders,
+    } = await undiciRequest(url, {
       dispatcher: agent,
       method: (options.method as string) || "GET",
       headers,
@@ -132,7 +136,14 @@ export async function proxyFetch(url: string, options: RequestInit = {}): Promis
     });
 
     const text = await body.text();
-    return new Response(text, { status: statusCode });
+    const responseHeaders = new Headers();
+    if (respHeaders) {
+      for (const [k, v] of Object.entries(respHeaders)) {
+        if (typeof v === "string") responseHeaders.set(k, v);
+        else if (Array.isArray(v)) responseHeaders.set(k, v.join(", "));
+      }
+    }
+    return new Response(text, { status: statusCode, headers: responseHeaders });
   } catch (err: any) {
     const proxyHost = getProxyHost() || "unknown";
     if (err.message?.includes("407")) {
@@ -140,4 +151,23 @@ export async function proxyFetch(url: string, options: RequestInit = {}): Promis
     }
     throw new Error(`Proxy request failed: ${err.message} (proxy: ${proxyHost})`);
   }
+}
+
+const RETRY_DELAYS_MS = [5000, 10000, 20000];
+
+export async function retryProxyFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  let lastError: Error | undefined;
+  for (let i = 0; i <= RETRY_DELAYS_MS.length; i++) {
+    try {
+      return await proxyFetch(url, options);
+    } catch (err: any) {
+      lastError = err;
+      if (i < RETRY_DELAYS_MS.length && err.message?.includes("Proxy request failed")) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[i]));
+      } else {
+        throw lastError;
+      }
+    }
+  }
+  throw new Error(`PROXY_FAILED: ${lastError?.message || "unknown error"}`);
 }

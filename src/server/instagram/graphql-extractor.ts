@@ -1,5 +1,6 @@
-import { proxyFetch } from "./proxy-helper";
 import { logger } from "./logger";
+import { retryProxyFetch } from "./proxy-helper";
+import { acquireToken } from "./rate-limiter";
 
 const QUERY_HASH = "37479f2b8209594dde7facb0d904896a";
 const PAGE_SIZE = 50;
@@ -55,9 +56,13 @@ export async function resolveProfileInfoMobile(
   username: string,
   headers: Record<string, string>,
 ): Promise<ProfileInfo> {
-  logger.warn(username, "web_profile_info schema removed — falling back to mobile usernameinfo endpoint")
+  logger.warn(username, "web_profile_info schema removed — falling back to mobile usernameinfo endpoint");
   const url = `https://i.instagram.com/api/v1/users/${encodeURIComponent(username)}/usernameinfo/`;
-  const response = await proxyFetch(url, { method: "GET", headers: { ...headers, "x-ig-app-id": MOBILE_IG_APP_ID } });
+  await acquireToken();
+  const response = await retryProxyFetch(url, {
+    method: "GET",
+    headers: { ...headers, "x-ig-app-id": MOBILE_IG_APP_ID },
+  });
   if (response.status === 404) throw new Error("PROFILE_NOT_FOUND");
   if (!response.ok) {
     const body = await response.text();
@@ -85,9 +90,10 @@ export async function resolveProfileInfoFromCookies(
   username: string,
   headers: Record<string, string>,
 ): Promise<ProfileInfo> {
-  logger.info(username, "Resolving profile info...")
+  logger.info(username, "Resolving profile info...");
   const url = `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`;
-  const response = await proxyFetch(url, { method: "GET", headers });
+  await acquireToken();
+  const response = await retryProxyFetch(url, { method: "GET", headers });
   if (response.status === 404) throw new Error("PROFILE_NOT_FOUND");
   if (!response.ok) {
     const body = await response.text();
@@ -122,9 +128,10 @@ export async function fetchFollowersPageFromCookies(
   const vars: Record<string, any> = { id: userId, first: PAGE_SIZE };
   if (cursor) vars.after = cursor;
 
-  logger.debug("GraphQL", `Page ${cursor ? "(cursor)" : "1"} — id=${userId.slice(0, 8)}...`)
+  logger.debug("GraphQL", `Page ${cursor ? "(cursor)" : "1"} — id=${userId.slice(0, 8)}...`);
   const url = `https://www.instagram.com/graphql/query/?query_hash=${QUERY_HASH}&variables=${encodeURIComponent(JSON.stringify(vars))}`;
-  const response = await proxyFetch(url, { method: "GET", headers, redirect: "manual" });
+  await acquireToken();
+  const response = await retryProxyFetch(url, { method: "GET", headers, redirect: "manual" });
 
   if (response.status === 302 || response.status === 303) {
     const loc = response.headers.get("location") || "";
@@ -179,7 +186,7 @@ export interface CookieBasedOptions {
   headers: Record<string, string>;
   sessionCookies: SessionCookies;
   maxPages?: number;
-  signal?: () => boolean;
+  signal?: () => boolean | Promise<boolean>;
 }
 
 export async function extractFollowersFromCookies(
@@ -212,7 +219,7 @@ export async function extractFollowersFromCookies(
   const avatarUrls = new Map<string, string>();
 
   while (requestCount < MAX_REQUESTS_PER_SESSION) {
-    if (options.signal?.()) throw new Error("STOPPED");
+    if (await options.signal?.()) throw new Error("STOPPED");
 
     let result: GraphQLPageResult;
 

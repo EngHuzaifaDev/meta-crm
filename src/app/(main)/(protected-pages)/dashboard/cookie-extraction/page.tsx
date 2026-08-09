@@ -12,10 +12,12 @@ import {
   Info,
   Loader2,
   Play,
+  Plus,
   RefreshCw,
   Terminal,
   Users,
   WifiOff,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -28,9 +30,9 @@ import {
   exportFollowersCSVAction,
   exportFollowersCSVChunkAction,
   getScrapedSourcesAction,
-  pollExtractionAction,
+  pollBatchExtractionAction,
   startCookieExtractionAction,
-  stopExtractionAction,
+  stopBatchExtractionAction,
 } from "@/server/instagram/actions";
 import type { ProgressEvent } from "@/server/instagram/streaming-extractor";
 
@@ -42,18 +44,47 @@ interface ScrapedSource {
   isInvalid?: boolean;
 }
 
-const STORAGE_RUN_ID = "cookieExtractionRunId";
-const STORAGE_FORM = "cookieExtractionForm";
+interface BatchTask {
+  runId: string;
+  profileUsername: string;
+  status: string;
+  batchId: string | null;
+}
+
+interface ExtractionJob {
+  id: string;
+  cookiesJson: string;
+  usernames: string;
+  error?: string;
+}
+
+interface BatchRef {
+  jobId: string;
+  batchId: string;
+}
+
+const STORAGE_RUN = "cookieExtractionRun";
+const MAX_JOBS = 5;
 
 type PageState = "idle" | "restoring" | "running" | "completed" | "stopped" | "error";
 
-function saveFormState(cookiesJson: string, usernames: string, testMode: boolean) {
-  sessionStorage.setItem(STORAGE_FORM, JSON.stringify({ cookiesJson, usernames, testMode }));
+function saveRunState(jobs: ExtractionJob[], testMode: boolean, batchRefs: BatchRef[]) {
+  sessionStorage.setItem(STORAGE_RUN, JSON.stringify({ jobs, testMode, batchRefs }));
+}
+
+function newJob(): ExtractionJob {
+  return { id: crypto.randomUUID(), cookiesJson: "", usernames: "" };
+}
+
+function jobUsernames(job: ExtractionJob): string[] {
+  return job.usernames
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 export default function CookieExtractionPage() {
-  const [cookiesJson, setCookiesJson] = useState("");
-  const [usernames, setUsernames] = useState("");
+  const [jobs, setJobs] = useState<ExtractionJob[]>(() => [newJob()]);
   const [testMode, setTestMode] = useState(false);
   const [pageState, setPageState] = useState<PageState>("idle");
   const [events, setEvents] = useState<ProgressEvent[]>([]);
@@ -63,10 +94,11 @@ export default function CookieExtractionPage() {
   const [showIssuesModal, setShowIssuesModal] = useState(false);
   const [scrapedSources, setScrapedSources] = useState<ScrapedSource[]>([]);
   const [restoreFailed, setRestoreFailed] = useState(false);
+  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
+  const [batchRefs, setBatchRefs] = useState<BatchRef[]>([]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const eventsEndRef = useRef<HTMLDivElement | null>(null);
-  const runIdRef = useRef<string | null>(null);
+  const batchRefsRef = useRef<BatchRef[]>([]);
 
   useEffect(() => {
     getScrapedSourcesAction(50)
@@ -81,86 +113,147 @@ export default function CookieExtractionPage() {
     }
   }, []);
 
-  const startPolling = useCallback(
-    (id: string) => {
-      pollRef.current = setInterval(async () => {
-        try {
-          const state = await pollExtractionAction(id);
-          if (!state) {
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(async () => {
+      const refs = batchRefsRef.current;
+      if (refs.length === 0) {
+        clearPoll();
+        setPageState("idle");
+        sessionStorage.removeItem(STORAGE_RUN);
+        return;
+      }
+      try {
+        const results = await Promise.all(refs.map((r) => pollBatchExtractionAction(r.batchId)));
+        const alive = refs.filter((_, i) => results[i] && results[i].status !== "not_found");
+        if (alive.length !== refs.length) {
+          batchRefsRef.current = alive;
+          setBatchRefs(alive);
+          if (alive.length === 0) {
             clearPoll();
             setPageState("idle");
-            sessionStorage.removeItem(STORAGE_RUN_ID);
+            sessionStorage.removeItem(STORAGE_RUN);
             return;
           }
-          setEvents(state.progress as ProgressEvent[]);
-          if (state.lastEvent) setLastEvent(state.lastEvent as ProgressEvent);
-          if (state.status !== "running") {
-            clearPoll();
-            sessionStorage.removeItem(STORAGE_RUN_ID);
-            if (state.status === "done") setPageState("completed");
-            else if (state.status === "error") setPageState("error");
-            else if (state.status === "stopped") setPageState("stopped");
-          }
-        } catch (err) {
-          console.error("Poll error:", err);
         }
-      }, 1000);
-    },
-    [clearPoll],
-  );
+        const current = results.filter((s): s is NonNullable<typeof s> => !!s && s.status !== "not_found");
+        const allEvents = current.flatMap((s) => s.progress as ProgressEvent[]);
+        setEvents(allEvents);
+        setBatchTasks(current.flatMap((s) => s.tasks ?? []));
+
+        const lasts = current.map((s) => s.lastEvent).filter(Boolean) as ProgressEvent[];
+        if (lasts.length > 0) {
+          let newestIdx = -1;
+          let newest: ProgressEvent | null = null;
+          let offset = 0;
+          for (const s of current) {
+            const idx = offset + (s.progress?.length ?? 0) - 1;
+            if (idx >= 0 && s.lastEvent && idx > newestIdx) {
+              newestIdx = idx;
+              newest = s.lastEvent as ProgressEvent;
+            }
+            offset += s.progress?.length ?? 0;
+          }
+          const base = newest ?? lasts[0];
+          setLastEvent({
+            ...base,
+            totalFollowers: lasts.reduce((n, e) => n + (e.totalFollowers ?? 0), 0),
+            totalEstimatedFollowers: lasts.reduce((n, e) => n + (e.totalEstimatedFollowers ?? 0), 0),
+            invalidCount: lasts.reduce((n, e) => n + (e.invalidCount ?? 0), 0),
+            privateCount: lasts.reduce((n, e) => n + (e.privateCount ?? 0), 0),
+            duplicateCount: lasts.reduce((n, e) => n + (e.duplicateCount ?? 0), 0),
+            skippedCount: lasts.reduce((n, e) => n + (e.skippedCount ?? 0), 0),
+            processedCount: lasts.reduce((n, e) => n + (e.processedCount ?? 0), 0),
+            totalCount: lasts.reduce((n, e) => n + (e.totalCount ?? 0), 0),
+          });
+        }
+
+        if (!current.some((s) => s.status === "running")) {
+          clearPoll();
+          sessionStorage.removeItem(STORAGE_RUN);
+          batchRefsRef.current = [];
+          setBatchRefs([]);
+          if (current.some((s) => s.status === "error")) setPageState("error");
+          else if (current.some((s) => s.status === "stopped")) setPageState("stopped");
+          else setPageState("completed");
+        }
+      } catch (err) {
+        console.error("Poll error:", err);
+      }
+    }, 5000);
+  }, [clearPoll]);
 
   useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events]);
+    const saved = sessionStorage.getItem(STORAGE_RUN);
+    if (!saved) return;
 
-  useEffect(() => {
-    const savedRunId = sessionStorage.getItem(STORAGE_RUN_ID);
-    if (!savedRunId) return;
-
-    setPageState("restoring");
-
-    const savedForm = sessionStorage.getItem(STORAGE_FORM);
-    if (savedForm) {
-      try {
-        const parsed = JSON.parse(savedForm);
-        setCookiesJson(parsed.cookiesJson ?? "");
-        setUsernames(parsed.usernames ?? "");
-        setTestMode(parsed.testMode ?? false);
-      } catch {}
+    let parsed: { jobs?: ExtractionJob[]; testMode?: boolean; batchRefs?: BatchRef[] };
+    try {
+      parsed = JSON.parse(saved);
+    } catch {
+      sessionStorage.removeItem(STORAGE_RUN);
+      return;
     }
 
+    if (parsed.jobs?.length) setJobs(parsed.jobs);
+    if (typeof parsed.testMode === "boolean") setTestMode(parsed.testMode);
+
+    const refs = (parsed.batchRefs ?? []).filter((r) => !!r && !!r.batchId);
+    if (refs.length === 0) return;
+
+    const savedJobs = parsed.jobs ?? [];
+    const savedTestMode = parsed.testMode ?? false;
+
+    setPageState("restoring");
     let cancelled = false;
 
-    (async () => {
-      const state = await pollExtractionAction(savedRunId);
+    void (async () => {
+      const results = await Promise.all(refs.map((r) => pollBatchExtractionAction(r.batchId)));
       if (cancelled) return;
 
-      if (!state) {
+      const alive = refs.filter((_, i) => results[i] && results[i].status !== "not_found");
+      if (alive.length === 0) {
         setRestoreFailed(true);
+        sessionStorage.removeItem(STORAGE_RUN);
         setTimeout(() => {
           if (!cancelled) setPageState("idle");
         }, 3000);
         return;
       }
 
-      if (state.lastEvent) setLastEvent(state.lastEvent as ProgressEvent);
-      if (state.status === "running") {
-        runIdRef.current = savedRunId;
-        setEvents(state.progress as ProgressEvent[]);
+      batchRefsRef.current = alive;
+      setBatchRefs(alive);
+      const current = results.filter((s): s is NonNullable<typeof s> => !!s && s.status !== "not_found");
+      setEvents(current.flatMap((s) => s.progress as ProgressEvent[]));
+      setBatchTasks(current.flatMap((s) => s.tasks ?? []));
+
+      if (current.some((s) => s.status === "running")) {
+        saveRunState(savedJobs, savedTestMode, alive);
         setPageState("running");
-        startPolling(savedRunId);
+        startPolling();
       } else {
-        setEvents(state.progress as ProgressEvent[]);
-        if (state.status === "done") setPageState("completed");
-        else if (state.status === "error") setPageState("error");
-        else if (state.status === "stopped") setPageState("stopped");
-        else {
-          sessionStorage.removeItem(STORAGE_RUN_ID);
-          setRestoreFailed(true);
-          setTimeout(() => {
-            if (!cancelled) setPageState("idle");
-          }, 3000);
+        sessionStorage.removeItem(STORAGE_RUN);
+        batchRefsRef.current = [];
+        setBatchRefs([]);
+        const lastEventOf = (s: NonNullable<(typeof current)[number]>): ProgressEvent | null =>
+          s.lastEvent as ProgressEvent | null;
+        const lastEvents = current.map(lastEventOf).filter(Boolean) as ProgressEvent[];
+        if (lastEvents.length > 0) {
+          setLastEvent({
+            ...lastEvents[lastEvents.length - 1],
+            totalFollowers: lastEvents.reduce((n, e) => n + (e.totalFollowers ?? 0), 0),
+            totalEstimatedFollowers: lastEvents.reduce((n, e) => n + (e.totalEstimatedFollowers ?? 0), 0),
+            invalidCount: lastEvents.reduce((n, e) => n + (e.invalidCount ?? 0), 0),
+            privateCount: lastEvents.reduce((n, e) => n + (e.privateCount ?? 0), 0),
+            duplicateCount: lastEvents.reduce((n, e) => n + (e.duplicateCount ?? 0), 0),
+            skippedCount: lastEvents.reduce((n, e) => n + (e.skippedCount ?? 0), 0),
+            processedCount: lastEvents.reduce((n, e) => n + (e.processedCount ?? 0), 0),
+            totalCount: lastEvents.reduce((n, e) => n + (e.totalCount ?? 0), 0),
+          });
         }
+        if (current.some((s) => s.status === "error")) setPageState("error");
+        else if (current.some((s) => s.status === "stopped")) setPageState("stopped");
+        else setPageState("completed");
       }
     })();
 
@@ -175,50 +268,72 @@ export default function CookieExtractionPage() {
     setEvents([]);
     setLastEvent(null);
     setRestoreFailed(false);
+    setBatchTasks([]);
 
-    if (!cookiesJson.trim()) {
-      setError("Paste your Instagram cookies JSON first");
-      return;
-    }
+    const validated = jobs.map((job) => {
+      let jobError: string | undefined;
+      if (!job.cookiesJson.trim()) {
+        jobError = "Paste your Instagram cookies JSON first";
+      } else {
+        try {
+          const parsed = JSON.parse(job.cookiesJson.trim());
+          if (!Array.isArray(parsed)) throw new Error();
+        } catch {
+          jobError = "Invalid JSON — must be an array of cookie objects";
+        }
+      }
+      if (!jobError && jobUsernames(job).length === 0) {
+        jobError = "Enter at least one username";
+      }
+      return { ...job, error: jobError };
+    });
+    setJobs(validated);
 
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cookiesJson.trim());
-      if (!Array.isArray(parsed)) throw new Error();
-    } catch {
-      setError("Invalid JSON — must be an array of cookie objects");
-      return;
-    }
+    if (validated.every((j) => j.error)) return;
 
-    const names = usernames
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (names.length === 0) {
-      setError("Enter at least one username");
-      return;
-    }
-
-    saveFormState(cookiesJson, usernames, testMode);
     setPageState("running");
 
-    const result = await startCookieExtractionAction(cookiesJson.trim(), names, testMode ? 2 : undefined);
-    if ("error" in result) {
-      setError(result.error as string);
+    const validJobs = validated.filter((j) => !j.error);
+    const results = await Promise.all(
+      validJobs.map(async (job) => {
+        const result = await startCookieExtractionAction(
+          job.cookiesJson.trim(),
+          jobUsernames(job),
+          testMode ? 2 : undefined,
+        );
+        if ("error" in result) return { jobId: job.id, error: result.error as string };
+        return { jobId: job.id, batchId: result.batchId };
+      }),
+    );
+
+    const failed = results.filter((r) => "error" in r) as { jobId: string; error: string }[];
+    if (failed.length > 0) {
+      setJobs((prev) =>
+        prev.map((job) => {
+          const res = failed.find((r) => r.jobId === job.id);
+          return res ? { ...job, error: res.error } : job;
+        }),
+      );
+    }
+
+    const ok = results.filter((r) => "batchId" in r) as BatchRef[];
+    if (ok.length === 0) {
       setPageState("idle");
+      setError("No extractions could be started — fix the highlighted errors");
       return;
     }
 
-    runIdRef.current = result.runId;
-    sessionStorage.setItem(STORAGE_RUN_ID, result.runId);
-    startPolling(result.runId);
+    batchRefsRef.current = ok;
+    setBatchRefs(ok);
+    saveRunState(validated, testMode, ok);
+    startPolling();
   };
 
   const handleStop = async () => {
-    if (runIdRef.current) {
-      await stopExtractionAction(runIdRef.current);
-    }
-    sessionStorage.removeItem(STORAGE_RUN_ID);
+    await Promise.all(batchRefsRef.current.map((r) => stopBatchExtractionAction(r.batchId)));
+    sessionStorage.removeItem(STORAGE_RUN);
+    batchRefsRef.current = [];
+    setBatchRefs([]);
     setShowStopModal(false);
   };
 
@@ -239,14 +354,24 @@ export default function CookieExtractionPage() {
   };
 
   const handleExtractSource = (username: string) => {
-    setUsernames((prev) => {
-      const lines = prev
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean);
+    setJobs((prev) => {
+      const [first, ...rest] = prev;
+      const lines = jobUsernames(first);
       if (lines.includes(username)) return prev;
-      return [...lines, username].join("\n");
+      return [{ ...first, usernames: [...lines, username].join("\n") }, ...rest];
     });
+  };
+
+  const updateJob = (id: string, patch: Partial<ExtractionJob>) => {
+    setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, ...patch } : j)));
+  };
+
+  const addJob = () => {
+    setJobs((prev) => (prev.length >= MAX_JOBS ? prev : [...prev, newJob()]));
+  };
+
+  const removeJob = (id: string) => {
+    setJobs((prev) => (prev.length > 1 ? prev.filter((j) => j.id !== id) : prev));
   };
 
   const handleReset = () => {
@@ -257,8 +382,10 @@ export default function CookieExtractionPage() {
     setError(null);
     setRestoreFailed(false);
     setShowIssuesModal(false);
-    sessionStorage.removeItem(STORAGE_RUN_ID);
-    runIdRef.current = null;
+    setBatchTasks([]);
+    sessionStorage.removeItem(STORAGE_RUN);
+    batchRefsRef.current = [];
+    setBatchRefs([]);
   };
 
   const done = lastEvent?.type === "done";
@@ -269,20 +396,20 @@ export default function CookieExtractionPage() {
   const duplicateCount = lastEvent?.duplicateCount ?? 0;
   const knownIssues = events.filter((e) => e.kind === "known").length;
   const unexpectedErrors = events.filter((e) => e.kind === "unknown").length;
-  const isDev = process.env.NODE_ENV === "development";
-  const consoleEvents = isDev ? events : events.filter((e) => e.type !== "follower");
   const processedCount = lastEvent?.processedCount ?? 0;
   const totalCount = lastEvent?.totalCount ?? 0;
   const profileProgress = totalCount > 0 ? Math.round((processedCount / totalCount) * 100) : 0;
   const followerProgress =
     totalEstimatedFollowers > 0 ? Math.round((totalFollowers / totalEstimatedFollowers) * 100) : 0;
-  const sessionReqCount = events.filter((e) => e.type === "follower").length;
 
   const active = pageState === "running" || pageState === "restoring";
   const showProgress = pageState !== "idle" || events.length > 0;
 
   useEffect(() => {
-    if ((pageState === "completed" || pageState === "stopped" || pageState === "error") && (knownIssues > 0 || unexpectedErrors > 0)) {
+    if (
+      (pageState === "completed" || pageState === "stopped" || pageState === "error") &&
+      (knownIssues > 0 || unexpectedErrors > 0)
+    ) {
       setShowIssuesModal(true);
     }
   }, [pageState, knownIssues, unexpectedErrors]);
@@ -294,8 +421,8 @@ export default function CookieExtractionPage() {
           <CardContent className="flex items-center gap-3 pt-6">
             <RefreshCw className="h-5 w-5 animate-spin text-primary" />
             <div>
-              <p className="text-sm font-medium">Reconnecting to extraction session...</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="font-medium text-sm">Reconnecting to extraction session...</p>
+              <p className="mt-0.5 text-muted-foreground text-xs">
                 Verifying server state — you will not lose progress
               </p>
             </div>
@@ -308,10 +435,10 @@ export default function CookieExtractionPage() {
           <CardContent className="flex items-center gap-3 pt-6">
             <WifiOff className="h-5 w-5 text-amber-600" />
             <div>
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+              <p className="font-medium text-amber-800 text-sm dark:text-amber-300">
                 Previous session was lost (server restarted)
               </p>
-              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
+              <p className="mt-0.5 text-amber-600 text-xs dark:text-amber-400">
                 Your form inputs are saved — review and start again. Any followers already scraped remain in the
                 database.
               </p>
@@ -329,39 +456,68 @@ export default function CookieExtractionPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="cookies">
-              Instagram Cookies JSON
-              <span className="text-xs text-muted-foreground ml-2">(paste from browser cookie editor)</span>
-            </Label>
-            <textarea
-              id="cookies"
-              className="flex min-h-[180px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-              placeholder='[{"domain":".instagram.com","name":"csrftoken","value":"...", ...}]'
-              value={cookiesJson}
-              onChange={(e) => setCookiesJson(e.target.value)}
-              disabled={active}
-            />
-          </div>
+          {jobs.map((job, index) => (
+            <div key={job.id} className="relative space-y-4 rounded-lg border p-4">
+              {jobs.length > 1 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute top-2 right-2"
+                  onClick={() => removeJob(job.id)}
+                  disabled={active}
+                >
+                  <X className="mr-1 h-4 w-4" />
+                  Remove
+                </Button>
+              )}
+              <p className="flex items-center gap-2 font-medium text-sm">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                Extraction {index + 1}
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor={`cookies-${job.id}`}>
+                  Instagram Cookies JSON
+                  <span className="ml-2 text-muted-foreground text-xs">(paste from browser cookie editor)</span>
+                </Label>
+                <textarea
+                  id={`cookies-${job.id}`}
+                  className="flex min-h-[180px] w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder='[{"domain":".instagram.com","name":"csrftoken","value":"...", ...}]'
+                  value={job.cookiesJson}
+                  onChange={(e) => updateJob(job.id, { cookiesJson: e.target.value, error: undefined })}
+                  disabled={active}
+                />
+              </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="usernames">
-              Target Usernames
-              <span className="text-xs text-muted-foreground ml-2">(one per line)</span>
-            </Label>
-            <textarea
-              id="usernames"
-              className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 font-mono"
-              placeholder={["target_user1", "target_user2"].join("\n")}
-              value={usernames}
-              onChange={(e) => setUsernames(e.target.value)}
-              disabled={active}
-            />
-          </div>
+              <div className="space-y-2">
+                <Label htmlFor={`usernames-${job.id}`}>
+                  Target Usernames
+                  <span className="ml-2 text-muted-foreground text-xs">(one per line)</span>
+                </Label>
+                <textarea
+                  id={`usernames-${job.id}`}
+                  className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder={["target_user1", "target_user2"].join("\n")}
+                  value={job.usernames}
+                  onChange={(e) => updateJob(job.id, { usernames: e.target.value, error: undefined })}
+                  disabled={active}
+                />
+              </div>
+
+              {job.error && <p className="text-destructive text-sm">{job.error}</p>}
+            </div>
+          ))}
+
+          {jobs.length < MAX_JOBS && (
+            <Button variant="outline" onClick={addJob} disabled={active}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add extraction
+            </Button>
+          )}
 
           {scrapedSources.length > 0 && (
             <div className="space-y-1.5">
-              <p className="text-xs text-muted-foreground font-medium">Previously extracted — click to add</p>
+              <p className="font-medium text-muted-foreground text-xs">Previously extracted — click to add</p>
               <div className="flex flex-wrap gap-1.5">
                 {scrapedSources.map((s) => (
                   <button
@@ -369,7 +525,7 @@ export default function CookieExtractionPage() {
                     type="button"
                     disabled={active || s.isPrivate || s.isInvalid}
                     onClick={() => handleExtractSource(s.profileUsername)}
-                    className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs hover:bg-muted transition-colors disabled:opacity-40"
+                    className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs transition-colors hover:bg-muted disabled:opacity-40"
                   >
                     @{s.profileUsername}
                     <span className="text-muted-foreground">({s.followerCount})</span>
@@ -386,19 +542,21 @@ export default function CookieExtractionPage() {
               onCheckedChange={(v) => setTestMode(v === true)}
               disabled={active}
             />
-            <Label htmlFor="test-mode" className="flex items-center gap-1.5 cursor-pointer">
+            <Label htmlFor="test-mode" className="flex cursor-pointer items-center gap-1.5">
               <Bug className="h-3.5 w-3.5" />
               Test mode — 2 pages per profile
             </Label>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-destructive text-sm">{error}</p>}
 
           <div className="flex gap-2">
             {pageState === "idle" && (
               <Button onClick={startExtraction}>
                 <Play className="mr-2 h-4 w-4" />
-                {testMode ? "Run Test" : "Start Extraction"}
+                {testMode
+                  ? "Run Test"
+                  : `Start ${jobs.length > 1 ? `${jobs.length} ` : ""}Extraction${jobs.length > 1 ? "s" : ""}`}
               </Button>
             )}
             {active && (
@@ -459,7 +617,7 @@ export default function CookieExtractionPage() {
             {(pageState === "running" || pageState === "restoring") && totalCount > 0 && (
               <div className="space-y-3">
                 <div>
-                  <div className="flex justify-between text-muted-foreground text-xs mb-1">
+                  <div className="mb-1 flex justify-between text-muted-foreground text-xs">
                     <span>
                       {processedCount} of {totalCount} profiles
                     </span>
@@ -469,7 +627,7 @@ export default function CookieExtractionPage() {
                 </div>
                 {totalEstimatedFollowers > 0 && (
                   <div>
-                    <div className="flex justify-between text-muted-foreground text-xs mb-1">
+                    <div className="mb-1 flex justify-between text-muted-foreground text-xs">
                       <span>
                         {totalFollowers.toLocaleString()} of ~{totalEstimatedFollowers.toLocaleString()} followers
                       </span>
@@ -480,6 +638,39 @@ export default function CookieExtractionPage() {
                 )}
               </div>
             )}
+
+            {batchRefs.map((ref, i) => {
+              const tasks = batchTasks.filter((t) => t.batchId === ref.batchId);
+              if (tasks.length === 0) return null;
+              return (
+                <div key={ref.batchId} className="space-y-1.5">
+                  <p className="font-medium text-muted-foreground text-xs">
+                    Extraction {i + 1} — {tasks.length} profile{tasks.length !== 1 ? "s" : ""}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {tasks.map((t) => (
+                      <Badge
+                        key={t.runId}
+                        variant={
+                          t.status === "done"
+                            ? "default"
+                            : t.status === "failed" || t.status === "stopped"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                        className={t.status === "pending" || t.status === "running" ? "gap-1" : "gap-1 opacity-70"}
+                      >
+                        {t.status === "running" && <Loader2 className="h-3 w-3 animate-spin" />}
+                        {t.status === "pending" && <RefreshCw className="h-3 w-3" />}
+                        {t.status === "done" && <CheckCircle className="h-3 w-3" />}
+                        {t.status === "failed" && <AlertCircle className="h-3 w-3" />}
+                        {t.status === "stopped" && <Ban className="h-3 w-3" />}@{t.profileUsername}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
 
             <div className="flex items-center gap-2 text-sm">
               {pageState === "running" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
@@ -517,46 +708,12 @@ export default function CookieExtractionPage() {
                   Complete
                 </Badge>
               )}
-              {pageState === "running" && (
-                <Badge variant="secondary" className="gap-1 text-xs">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  {sessionReqCount} requests
-                </Badge>
-              )}
-            </div>
-
-            <div className="max-h-[200px] overflow-y-auto space-y-0.5 text-xs font-mono text-muted-foreground border rounded p-2">
-              {consoleEvents.map((ev, i) => (
-                <div key={i} className="flex gap-2">
-                  <span className="shrink-0 w-6 opacity-50">{i + 1}</span>
-                  <span
-                    className={
-                      ev.type === "error"
-                        ? "text-destructive"
-                        : ev.type === "done"
-                          ? "text-green-500"
-                          : ev.type === "stopped"
-                            ? "text-orange-500"
-                            : ev.type === "invalid"
-                              ? "text-amber-500"
-                              : ev.type === "skipped"
-                                ? "text-sky-500 italic"
-                                : ev.type === "follower"
-                                  ? "text-blue-400"
-                                  : ""
-                    }
-                  >
-                    {ev.type === "follower" ? `+ ${ev.followerUsername}` : ev.message || ev.error || ""}
-                  </span>
-                </div>
-              ))}
-              <div ref={eventsEndRef} />
             </div>
 
             {pageState === "running" && (
-              <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <p className="flex items-center gap-1 text-muted-foreground text-xs">
                 <RefreshCw className="h-3 w-3 animate-spin" />
-                Auto-refreshing every second
+                Auto-refreshing every 5 seconds
               </p>
             )}
           </CardContent>
@@ -566,7 +723,7 @@ export default function CookieExtractionPage() {
       {/* Issues Modal */}
       {showIssuesModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <Card className="w-full max-w-md mx-4">
+          <Card className="mx-4 w-full max-w-md">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Info className="h-5 w-5 text-sky-500" />
@@ -574,31 +731,31 @@ export default function CookieExtractionPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
+              <p className="text-muted-foreground text-sm">
                 {totalFollowers} followers scraped, but some profiles could not be processed.
               </p>
               {knownIssues > 0 && (
-                <div className="rounded-md border border-sky-300/50 bg-sky-50 p-3 space-y-1 dark:bg-sky-950/20">
-                  <p className="text-sm font-medium text-sky-700 flex items-center gap-2 dark:text-sky-300">
+                <div className="space-y-1 rounded-md border border-sky-300/50 bg-sky-50 p-3 dark:bg-sky-950/20">
+                  <p className="flex items-center gap-2 font-medium text-sky-700 text-sm dark:text-sky-300">
                     <Info className="h-4 w-4" />
                     {knownIssues} profile{knownIssues !== 1 ? "s" : ""} skipped — known Instagram-side issue
                   </p>
-                  <p className="text-xs text-sky-600 dark:text-sky-400">
+                  <p className="text-sky-600 text-xs dark:text-sky-400">
                     Instagram removed the profile-info schema for business/creator accounts. This is a known change on
-                    Instagram's side, not a failure of the extraction — other profiles were unaffected. Retry these later
-                    with fresh cookies.
+                    Instagram's side, not a failure of the extraction — other profiles were unaffected. Retry these
+                    later with fresh cookies.
                   </p>
                 </div>
               )}
               {unexpectedErrors > 0 && (
-                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-1">
-                  <p className="text-sm font-medium text-destructive flex items-center gap-2">
+                <div className="space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+                  <p className="flex items-center gap-2 font-medium text-destructive text-sm">
                     <AlertCircle className="h-4 w-4" />
                     {unexpectedErrors} unexpected error{unexpectedErrors !== 1 ? "s" : ""}
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    These are not explained by known Instagram behavior. Likely causes: expired session, proxy/IP flagged,
-                    or a rate limit. Check the logs and re-run with fresh cookies.
+                  <p className="text-muted-foreground text-xs">
+                    These are not explained by known Instagram behavior. Likely causes: expired session, proxy/IP
+                    flagged, or a rate limit. Check the logs and re-run with fresh cookies.
                   </p>
                 </div>
               )}
@@ -615,17 +772,13 @@ export default function CookieExtractionPage() {
       {/* Stop Confirmation Modal */}
       {showStopModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <Card className="w-full max-w-sm mx-4">
+          <Card className="mx-4 w-full max-w-sm">
             <CardHeader>
               <CardTitle className="text-lg">Stop Extraction?</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                The current page will finish, then extraction stops.{" "}
-                <span className="font-semibold text-destructive">
-                  This is destructive — you will NOT be able to resume extraction for these profiles in this session.
-                </span>{" "}
-                Any followers already scraped will remain in the database.
+              <p className="text-muted-foreground text-sm">
+                The current page will finish, then extraction stops. Any followers already scraped remain saved.
               </p>
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setShowStopModal(false)}>
