@@ -214,22 +214,51 @@ export async function getAllFollowersAction(sourceProfile?: string, page = 0, pa
   };
 }
 
-export async function exportFollowersCSVAction(sourceProfile?: string): Promise<{ total: number }> {
+export async function exportFollowersCSVAction(
+  sourceProfile?: string,
+  includeHarvested = false,
+): Promise<{ total: number }> {
   const { getAllFollowers } = await import("@/lib/db/utils/instagram");
   const { total } = await getAllFollowers(sourceProfile, 1, 0);
-  return { total };
+  if (!includeHarvested || sourceProfile) return { total };
+
+  const { countHarvestedExcludingFollowers } = await import("@/lib/db/utils/harvested-profiles");
+  const harvested = await countHarvestedExcludingFollowers();
+  return { total: total + harvested };
 }
 
 export async function exportFollowersCSVChunkAction(
   sourceProfile?: string,
   page = 0,
   chunkSize = 50000,
+  includeHarvested = false,
 ): Promise<{ csv: string; page: number; isLast: boolean }> {
   const { getAllFollowers } = await import("@/lib/db/utils/instagram");
   const { followers, total } = await getAllFollowers(sourceProfile, chunkSize, page * chunkSize);
+  const { getHarvestedExcludingFollowersPage } = await import("@/lib/db/utils/harvested-profiles");
+
   const rows = followers.map((f) => f.followerUsername);
+
+  if (!includeHarvested || sourceProfile) {
+    const csv = page === 0 ? ["username", ...rows].join("\n") : rows.join("\n");
+    return { csv, page, isLast: page * chunkSize + followers.length >= total };
+  }
+
+  const offset = page * chunkSize;
+  const remaining = chunkSize - rows.length;
+  if (remaining > 0) {
+    const harvestedOffset = Math.max(0, offset - total);
+    const harvestedRows = await getHarvestedExcludingFollowersPage(harvestedOffset, remaining);
+    rows.push(...harvestedRows);
+  }
+
   const csv = page === 0 ? ["username", ...rows].join("\n") : rows.join("\n");
-  return { csv, page, isLast: page * chunkSize + followers.length >= total };
+  return { csv, page, isLast: rows.length < chunkSize };
+}
+
+export async function getUniqueProfilesCountAction() {
+  const { getUniqueProfileCount } = await import("@/lib/db/utils/instagram");
+  return getUniqueProfileCount();
 }
 
 export async function getAllDistinctSourceProfilesAction(): Promise<string[]> {
@@ -340,6 +369,30 @@ export async function getHarvestLogsAction(runIds: string[], limitPerRun = 50) {
     }));
   }
   return result;
+}
+
+export async function getHarvestDuplicatesAction() {
+  const auth = await getAuth();
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
+
+  const { getHarvestedDuplicateUsernames } = await import("@/lib/db/utils/harvested-profiles");
+  const duplicates = await getHarvestedDuplicateUsernames();
+  return { duplicates, count: duplicates.length };
+}
+
+export async function mergeHarvestDuplicatesAction() {
+  const auth = await getAuth();
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
+
+  const { getHarvestedDuplicateUsernames, deleteHarvestedByUsernames } = await import(
+    "@/lib/db/utils/harvested-profiles"
+  );
+  const duplicates = await getHarvestedDuplicateUsernames();
+  if (duplicates.length === 0) return { dropped: [], count: 0 };
+  const removed = await deleteHarvestedByUsernames(duplicates);
+  return { dropped: duplicates, count: removed };
 }
 
 export async function getProfilesWithStatsAction() {

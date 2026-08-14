@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { AlertTriangle, Ban, Loader2, RefreshCw, Shield, Trash2, Users, Wrench, Zap } from "lucide-react";
+import { AlertTriangle, Ban, GitMerge, Loader2, RefreshCw, Shield, Trash2, Users, Wrench, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,10 @@ import { getCollectiveExport, getFollowerTargetM, setCollectiveExport, setFollow
 import {
   deleteProfileDataAction,
   getFailedTasksAction,
+  getHarvestDuplicatesAction,
   getProfilesWithStatsAction,
   getRunningTasksAction,
+  mergeHarvestDuplicatesAction,
   retryFailedTaskAction,
   stopExtractionAction,
 } from "@/server/instagram/actions";
@@ -76,10 +78,27 @@ export default function AdminPage() {
   const [stopping, setStopping] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [targetInput, setTargetInput] = useState(String(getFollowerTargetM()));
+  const [duplicates, setDuplicates] = useState<string[] | null>(null);
+  const [checkingDupes, setCheckingDupes] = useState(false);
+  const [mergingDupes, setMergingDupes] = useState(false);
 
   useEffect(() => {
     setCollective(getCollectiveExport());
   }, []);
+
+  const handleCheckDuplicates = async () => {
+    setCheckingDupes(true);
+    const result = await getHarvestDuplicatesAction();
+    if (!("error" in result)) setDuplicates(result.duplicates as string[]);
+    setCheckingDupes(false);
+  };
+
+  const handleMergeDuplicates = async () => {
+    setMergingDupes(true);
+    const result = await mergeHarvestDuplicatesAction();
+    if (!("error" in result)) setDuplicates(result.dropped as string[]);
+    setMergingDupes(false);
+  };
 
   const handleTargetChange = (value: string) => {
     setTargetInput(value);
@@ -292,6 +311,60 @@ export default function AdminPage() {
               <span className="text-muted-foreground text-xs">M</span>
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <GitMerge className="h-4 w-4" />
+            Harvested Duplicates
+            {duplicates && (
+              <Badge variant={duplicates.length > 0 ? "destructive" : "secondary"} className="ml-1 text-xs">
+                {duplicates.length}
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-muted-foreground text-xs">
+            Checks comments-harvested profiles against extracted followers. Duplicates are removed from the harvested
+            side only — follower data is never touched.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCheckDuplicates}
+              disabled={checkingDupes || mergingDupes}
+            >
+              {checkingDupes ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              <span className="ml-1">Check duplicates</span>
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleMergeDuplicates}
+              disabled={checkingDupes || mergingDupes || (duplicates !== null && duplicates.length === 0)}
+            >
+              {mergingDupes ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              <span className="ml-1">Merge (remove from harvested)</span>
+            </Button>
+          </div>
+          {duplicates && duplicates.length > 0 && (
+            <div className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border bg-red-50 p-3 dark:bg-red-950/10">
+              <p className="text-muted-foreground text-xs">
+                {mergingDupes
+                  ? "Removing these profiles from comments harvest..."
+                  : "Profiles already in followers — dropped from comments harvest on merge:"}
+              </p>
+              {duplicates.map((name) => (
+                <p key={name} className="font-mono text-xs">
+                  @{name}
+                </p>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 

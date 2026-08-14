@@ -269,6 +269,33 @@ export async function getAllDistinctSourceProfiles(): Promise<string[]> {
   return col.distinct("sourceProfileUsername");
 }
 
+export async function getUniqueProfileCount(): Promise<{
+  followers: number;
+  harvested: number;
+  duplicates: number;
+  unique: number;
+}> {
+  const db = await connectDb();
+  const [followersCol, harvestedCol] = await Promise.all([
+    db.collection("instagramFollowers"),
+    db.collection("instagramHarvestedProfiles"),
+  ]);
+  const [followerSet, harvestedSet] = await Promise.all([
+    followersCol.distinct("followerUsername") as Promise<string[]>,
+    harvestedCol.distinct("username") as Promise<string[]>,
+  ]);
+  const f = new Set<string>(followerSet);
+  const h = new Set<string>(harvestedSet);
+  let duplicates = 0;
+  for (const username of h) if (f.has(username)) duplicates++;
+  return {
+    followers: f.size,
+    harvested: h.size,
+    duplicates,
+    unique: f.size + h.size - duplicates,
+  };
+}
+
 export async function getProfilesWithStats(): Promise<
   Array<{
     profileUsername: string;

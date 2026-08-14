@@ -124,3 +124,54 @@ export async function deleteHarvestedProfiles(shortcode: string): Promise<number
   const result = await col.deleteMany({ shortcode });
   return result.deletedCount;
 }
+
+export async function getHarvestedDuplicateUsernames(): Promise<string[]> {
+  const col = await getHarvestedCol();
+  const harvested = await col.distinct("username");
+  if (harvested.length === 0) return [];
+
+  const db = await connectDb();
+  const followersCol = db.collection("instagramFollowers");
+  const followerUsernames = new Set<string>(await followersCol.distinct("followerUsername"));
+
+  return harvested.filter((u) => followerUsernames.has(u)).sort();
+}
+
+export async function deleteHarvestedByUsernames(usernames: string[]): Promise<number> {
+  if (usernames.length === 0) return 0;
+  const col = await getHarvestedCol();
+  const result = await col.deleteMany({ username: { $in: usernames } });
+  return result.deletedCount;
+}
+
+const EXCLUDE_FOLLOWERS_LOOKUP = {
+  $lookup: {
+    from: "instagramFollowers",
+    localField: "username",
+    foreignField: "followerUsername",
+    as: "existing",
+  },
+} as const;
+
+export async function countHarvestedExcludingFollowers(): Promise<number> {
+  const col = await getHarvestedCol();
+  const result = await col
+    .aggregate([EXCLUDE_FOLLOWERS_LOOKUP as any, { $match: { existing: { $size: 0 } } }, { $count: "n" }])
+    .toArray();
+  return (result[0]?.n as number | undefined) ?? 0;
+}
+
+export async function getHarvestedExcludingFollowersPage(skip: number, limit: number): Promise<string[]> {
+  const col = await getHarvestedCol();
+  const docs = await col
+    .aggregate([
+      EXCLUDE_FOLLOWERS_LOOKUP as any,
+      { $match: { existing: { $size: 0 } } },
+      { $sort: { _id: 1 } },
+      { $skip: skip },
+      { $limit: limit },
+      { $project: { _id: 0, username: 1 } },
+    ])
+    .toArray();
+  return docs.map((d) => d.username as string);
+}
