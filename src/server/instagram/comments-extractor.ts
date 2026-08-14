@@ -28,14 +28,14 @@ export interface MediaInfo {
   commentCount: number;
 }
 
-const SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const SHORTCODE_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 export function decodeShortcode(shortcode: string): string {
   let mediaId = BigInt(0);
   for (const char of shortcode) {
     const idx = SHORTCODE_ALPHABET.indexOf(char);
     if (idx === -1) throw new Error(`Invalid shortcode character: ${char}`);
-    mediaId = mediaId * BigInt(62) + BigInt(idx);
+    mediaId = mediaId * BigInt(64) + BigInt(idx);
   }
   return mediaId.toString();
 }
@@ -45,9 +45,15 @@ export function parseShortcodes(input: string): string[] {
   const seen = new Set<string>();
   const shortcodes: string[] = [];
   for (const raw of urls) {
-    const match = raw.match(/(?:instagram\.com\/(?:p|reel|reels|tv|stories\/[^/]+)\/)([A-Za-z0-9_-]+)/);
-    const code = match ? match[1] : raw.replace(/^https?:\/\//, "");
-    if (/^[A-Za-z0-9_-]{5,12}$/.test(code) && !seen.has(code)) {
+    const urlMatch = raw.match(
+      /instagram\.com\/(?:[\w.-]+\/)?(?:p|reel|reels|tv|stories(?:\/[\w.-]+)?)\/([A-Za-z0-9_-]{5,12})/,
+    );
+    const code = urlMatch
+      ? urlMatch[1]
+      : /^[A-Za-z0-9_-]{5,12}$/.test(raw.replace(/^https?:\/\//, ""))
+        ? raw.replace(/^https?:\/\//, "")
+        : null;
+    if (code && !seen.has(code)) {
       seen.add(code);
       shortcodes.push(code);
     }
@@ -67,7 +73,7 @@ function mapCommentUser(user: any): CommenterInfo {
 
 export type HarvestLogCallback = (entry: {
   kind: "media_info" | "comments_page" | "error";
-  shortcode: string;
+  shortcode?: string;
   mediaId?: string;
   url?: string;
   params?: Record<string, unknown>;
@@ -86,11 +92,15 @@ export async function resolveMediaInfoFromCookies(
   headers: Record<string, string>,
   log?: HarvestLogCallback,
 ): Promise<MediaInfo | null> {
-  const url = `https://www.instagram.com/api/v1/media/${mediaId}/info/`;
   const startedAt = Date.now();
-  await acquireToken();
-  const response = await retryProxyFetch(url, { method: "GET", headers });
-  const durationMs = Date.now() - startedAt;
+  const attempt = async (url: string, extraHeaders: Record<string, string> = {}) => {
+    await acquireToken();
+    return retryProxyFetch(url, { method: "GET", headers: { ...headers, ...extraHeaders } });
+  };
+
+  const webUrl = `https://www.instagram.com/api/v1/media/${mediaId}/info/`;
+  let response = await attempt(webUrl);
+  let usedUrl = webUrl;
 
   if (response.status === 302 || response.status === 303) {
     const loc = response.headers.get("location") || "";
@@ -99,27 +109,69 @@ export async function resolveMediaInfoFromCookies(
         kind: "media_info",
         shortcode,
         mediaId,
-        url,
+        url: webUrl,
         status: response.status,
         error: "SESSION_EXPIRED",
-        durationMs,
+        durationMs: Date.now() - startedAt,
       });
       throw new Error("SESSION_EXPIRED");
     }
   }
   if (response.status === 404) {
-    await log?.({ kind: "media_info", shortcode, mediaId, url, status: 404, error: "MEDIA_NOT_FOUND", durationMs });
-    return null;
+    await log?.({
+      kind: "media_info",
+      shortcode,
+      mediaId,
+      url: webUrl,
+      status: 404,
+      error: "MEDIA_NOT_FOUND",
+      durationMs: Date.now() - startedAt,
+    });
+    throw new Error("MEDIA_NOT_FOUND");
   }
   if (response.status === 429) {
-    await log?.({ kind: "media_info", shortcode, mediaId, url, status: 429, error: "RATE_LIMITED", durationMs });
+    await log?.({
+      kind: "media_info",
+      shortcode,
+      mediaId,
+      url: webUrl,
+      status: 429,
+      error: "RATE_LIMITED",
+      durationMs: Date.now() - startedAt,
+    });
     throw new Error("RATE_LIMITED");
   }
   if (!response.ok) {
-    const body = await response.text();
-    logger.warn(shortcode, `media info failed (${response.status}) — continuing with fallback source key`);
-    await log?.({ kind: "media_info", shortcode, mediaId, url, status: response.status, body, durationMs });
-    return null;
+    const mobileUrl = `https://i.instagram.com/api/v1/media/${mediaId}/info/`;
+    logger.warn(shortcode, `web media info failed (${response.status}) — falling back to mobile endpoint`);
+    usedUrl = mobileUrl;
+    response = await attempt(mobileUrl, { "x-ig-app-id": MOBILE_IG_APP_ID });
+    if (response.status === 429) {
+      await log?.({
+        kind: "media_info",
+        shortcode,
+        mediaId,
+        url: mobileUrl,
+        status: 429,
+        error: "RATE_LIMITED",
+        durationMs: Date.now() - startedAt,
+      });
+      throw new Error("RATE_LIMITED");
+    }
+    if (!response.ok) {
+      const body = await response.text();
+      logger.warn(shortcode, `media info failed (${response.status}) — continuing with fallback source key`);
+      await log?.({
+        kind: "media_info",
+        shortcode,
+        mediaId,
+        url: mobileUrl,
+        status: response.status,
+        body,
+        durationMs: Date.now() - startedAt,
+      });
+      return null;
+    }
   }
 
   const text = await response.text();
@@ -127,23 +179,39 @@ export async function resolveMediaInfoFromCookies(
   try {
     parsed = JSON.parse(text);
   } catch {
-    await log?.({ kind: "media_info", shortcode, mediaId, url, status: response.status, body: text, durationMs });
+    await log?.({
+      kind: "media_info",
+      shortcode,
+      mediaId,
+      url: usedUrl,
+      status: response.status,
+      body: text,
+      durationMs: Date.now() - startedAt,
+    });
     return null;
   }
   const item = parsed?.items?.[0];
   if (!item?.user?.username) {
     logger.warn(shortcode, "media info returned unexpected structure — continuing with fallback source key");
-    await log?.({ kind: "media_info", shortcode, mediaId, url, status: response.status, body: text, durationMs });
+    await log?.({
+      kind: "media_info",
+      shortcode,
+      mediaId,
+      url: usedUrl,
+      status: response.status,
+      body: text,
+      durationMs: Date.now() - startedAt,
+    });
     return null;
   }
   await log?.({
     kind: "media_info",
     shortcode,
     mediaId,
-    url,
+    url: usedUrl,
     status: response.status,
     body: text,
-    durationMs,
+    durationMs: Date.now() - startedAt,
   });
   return {
     mediaId,
@@ -348,15 +416,20 @@ export async function extractCommentersFromCookies(
       continue;
     }
 
-    const mediaInfo = await resolveMediaInfoFromCookies(mediaId, shortcode, headers, log);
-    if (!mediaInfo) {
-      logger.warn(shortcode, "Media not found");
-      mediaFailed++;
-      continue;
+    let mediaInfo: MediaInfo | null;
+    try {
+      mediaInfo = await resolveMediaInfoFromCookies(mediaId, shortcode, headers, log);
+    } catch (err: any) {
+      if (err.message === "MEDIA_NOT_FOUND") {
+        logger.warn(shortcode, "Media not found");
+        mediaFailed++;
+        continue;
+      }
+      throw err;
     }
-    const owner = sourceUsername ?? mediaInfo.ownerUsername;
-    estimatedTotal += mediaInfo.commentCount;
-    const totalPages = Math.ceil(mediaInfo.commentCount / 50);
+    const owner = sourceUsername ?? mediaInfo?.ownerUsername;
+    estimatedTotal += mediaInfo?.commentCount ?? 0;
+    const totalPages = Math.ceil((mediaInfo?.commentCount ?? 0) / 50);
 
     let maxId: string | undefined;
     let page = 0;
@@ -402,7 +475,7 @@ export async function extractCommentersFromCookies(
           avatarUrl: commenter.profilePicUrl || undefined,
           isVerified: commenter.isVerified,
           isPrivate: commenter.isPrivate,
-          message: `Page ${page + 1}/${totalPages} — ${mediaFetched} commenters on @${owner}`,
+          message: `Page ${page + 1}/${totalPages} — ${mediaFetched} commenters on @${owner ?? "unknown"}`,
         });
       }
 

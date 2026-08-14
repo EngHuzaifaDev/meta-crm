@@ -302,10 +302,26 @@ export async function exportHarvestCSVChunkAction(
   return { csv, page, isLast: page * chunkSize + profiles.length >= total };
 }
 
+export interface SerializedHarvestLogEntry {
+  ts: string;
+  kind: string;
+  shortcode: string;
+  mediaId: string | null;
+  url: string | null;
+  params: Record<string, unknown> | null;
+  status: number | null;
+  body: string | null;
+  nextMaxId: string | null;
+  hasMore: boolean | null;
+  commentersCount: number | null;
+  error: string | null;
+  durationMs: number | null;
+}
+
 export async function getHarvestLogsAction(runIds: string[], limitPerRun = 50) {
   const { getHarvestLogsForRuns } = await import("@/lib/db/utils/harvest-log");
   const logs = await getHarvestLogsForRuns(runIds, limitPerRun);
-  const result: Record<string, unknown[]> = {};
+  const result: Record<string, SerializedHarvestLogEntry[]> = {};
   for (const [runId, entries] of Object.entries(logs)) {
     result[runId] = entries.map((e) => ({
       ts: e.ts instanceof Date ? e.ts.toISOString() : String(e.ts),
@@ -334,7 +350,7 @@ export async function getProfilesWithStatsAction() {
 export async function deleteProfileDataAction(profileUsername: string) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
 
   const { deleteProfileData } = await import("@/lib/db/utils/instagram");
   return deleteProfileData(profileUsername);
@@ -347,7 +363,7 @@ function serializeDate(value: unknown): string {
 export async function getFailedTasksAction(page = 0, pageSize = 20) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
 
   const { getFailedTasks } = await import("@/lib/db/utils/extraction-task");
   const result = await getFailedTasks(page, pageSize);
@@ -370,7 +386,7 @@ export async function getFailedTasksAction(page = 0, pageSize = 20) {
 export async function retryFailedTaskAction(runId: string) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
 
   const { retryFailedTask } = await import("@/lib/db/utils/extraction-task");
   const success = await retryFailedTask(runId);

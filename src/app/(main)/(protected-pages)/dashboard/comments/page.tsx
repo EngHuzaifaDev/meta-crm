@@ -31,6 +31,7 @@ import {
   exportFollowersCSVChunkAction,
   getHarvestLogsAction,
   pollBatchExtractionAction,
+  type SerializedHarvestLogEntry,
   startCommentsExtractionAction,
   stopBatchExtractionAction,
 } from "@/server/instagram/actions";
@@ -45,22 +46,6 @@ interface BatchTask {
 
 interface BatchRef {
   batchId: string;
-}
-
-interface HarvestLogEntry {
-  ts: string;
-  kind: string;
-  shortcode: string;
-  mediaId: string | null;
-  url: string | null;
-  params: Record<string, unknown> | null;
-  status: number | null;
-  body: string | null;
-  nextMaxId: string | null;
-  hasMore: boolean | null;
-  commentersCount: number | null;
-  error: string | null;
-  durationMs: number | null;
 }
 
 const STORAGE_RUN = "commentsHarvestRun";
@@ -82,7 +67,7 @@ export default function CommentsHarvestPage() {
   const [error, setError] = useState<string | null>(null);
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
   const [restoreFailed, setRestoreFailed] = useState(false);
-  const [logs, setLogs] = useState<Record<string, HarvestLogEntry[]>>({});
+  const [logs, setLogs] = useState<Record<string, SerializedHarvestLogEntry[]>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -123,7 +108,7 @@ export default function CommentsHarvestPage() {
         if (runIds.length > 0) {
           getHarvestLogsAction(runIds, 20)
             .then(setLogs)
-            .catch(() => {});
+            .catch(() => undefined);
         }
 
         const lasts = current.map((s) => s.lastEvent).filter(Boolean) as ProgressEvent[];
@@ -205,7 +190,7 @@ export default function CommentsHarvestPage() {
       if (runIds.length > 0) {
         getHarvestLogsAction(runIds, 20)
           .then(setLogs)
-          .catch(() => {});
+          .catch(() => undefined);
       }
       const lasts = current.map((s) => s.lastEvent).filter(Boolean) as ProgressEvent[];
       if (lasts.length > 0) {
@@ -623,7 +608,7 @@ export default function CommentsHarvestPage() {
                     <ChevronDown
                       className={`h-4 w-4 transition-transform ${expandedLogs[runId] ? "" : "-rotate-90"}`}
                     />
-                    <span className="font-mono font-medium">{shortcode}</span>
+                    <span className="font-medium font-mono">{shortcode}</span>
                     <span className="text-muted-foreground text-xs">
                       {entries.length} entries — latest {new Date(entries[entries.length - 1].ts).toLocaleTimeString()}
                     </span>
@@ -645,7 +630,7 @@ export default function CommentsHarvestPage() {
   );
 }
 
-function LogRow({ entry }: { entry: HarvestLogEntry }) {
+function LogRow({ entry }: { entry: SerializedHarvestLogEntry }) {
   const [expanded, setExpanded] = useState(false);
   const error = !!entry.error || (entry.status !== null && entry.status >= 400);
   const summary = [

@@ -77,7 +77,7 @@ export async function extractSingleMediaCommentsFromCookies(options: CommentsStr
           return t?.status === "stopped";
         },
         log: async (entry) => {
-          await pushHarvestLog(runId, entry);
+          await pushHarvestLog(runId, { ...entry, shortcode: entry.shortcode ?? shortcode });
         },
       },
       async (event) => {
