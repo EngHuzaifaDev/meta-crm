@@ -133,9 +133,9 @@ export async function checkScrapedSourcesAction(usernames: string[]) {
   return statuses as Record<string, "scraped" | "private" | "invalid" | null>;
 }
 
-export async function getScrapedSourcesAction(limit = 10) {
+export async function getScrapedSourcesAction(limit = 10, sort: "fresh" | "followers" | "followers-asc" = "followers") {
   const { getScrapedSources, countScrapedSources } = await import("@/lib/db/utils/instagram");
-  const [sources, total] = await Promise.all([getScrapedSources(limit), countScrapedSources()]);
+  const [sources, total] = await Promise.all([getScrapedSources(limit, sort), countScrapedSources()]);
   return { sources, hasMore: total > limit, total };
 }
 
@@ -193,7 +193,7 @@ export async function getProfilesWithStatsAction() {
 export async function deleteProfileDataAction(profileUsername: string) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
 
   const { deleteProfileData } = await import("@/lib/db/utils/instagram");
   return deleteProfileData(profileUsername);
@@ -206,7 +206,7 @@ function serializeDate(value: unknown): string {
 export async function getFailedTasksAction(page = 0, pageSize = 20) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
 
   const { getFailedTasks } = await import("@/lib/db/utils/extraction-task");
   const result = await getFailedTasks(page, pageSize);
@@ -229,9 +229,26 @@ export async function getFailedTasksAction(page = 0, pageSize = 20) {
 export async function retryFailedTaskAction(runId: string) {
   const auth = await getAuth();
   const sesh = await auth.api.getSession({ headers: await headers() });
-  if (!sesh || sesh.user.role !== 0) return { error: "Unauthorized — admin only" };
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
 
   const { retryFailedTask } = await import("@/lib/db/utils/extraction-task");
   const success = await retryFailedTask(runId);
   return { success };
+}
+
+export async function getRunningTasksAction() {
+  const auth = await getAuth();
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (sesh?.user.role !== 0) return { error: "Unauthorized — admin only" };
+
+  const { getRunningTasks } = await import("@/lib/db/utils/extraction-task");
+  const tasks = await getRunningTasks(20);
+  return {
+    tasks: tasks.map((t) => ({
+      runId: t.runId,
+      profileUsername: t.profileUsername,
+      batchId: t.batchId ?? null,
+      startedAt: t.startedAt ? serializeDate(t.startedAt) : null,
+    })),
+  };
 }

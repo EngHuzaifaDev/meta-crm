@@ -2,16 +2,21 @@
 
 import { useEffect, useState } from "react";
 
-import { AlertTriangle, Loader2, RefreshCw, Shield, Trash2, Users } from "lucide-react";
+import { AlertTriangle, Ban, Loader2, RefreshCw, Shield, Trash2, Users, Wrench, Zap } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { getCollectiveExport, getFollowerTargetM, setCollectiveExport, setFollowerTargetM } from "@/lib/dev-settings";
 import {
   deleteProfileDataAction,
   getFailedTasksAction,
   getProfilesWithStatsAction,
+  getRunningTasksAction,
   retryFailedTaskAction,
+  stopExtractionAction,
 } from "@/server/instagram/actions";
 
 interface ProfileStat {
@@ -31,7 +36,30 @@ interface FailedTask {
   totalFetched: number;
   estimatedTotal: number;
   createdAt: string;
+  startedAt?: string;
   completedAt: string;
+}
+
+interface RunningTask {
+  runId: string;
+  profileUsername: string;
+  batchId: string | null;
+  startedAt: string | null;
+}
+
+const ERROR_TYPE_LABELS: Record<string, string> = {
+  SESSION_EXPIRED: "Session expired",
+  PROXY_FAILED: "Proxy failed",
+  RATE_LIMITED: "Rate limited",
+  UNKNOWN: "Unknown error",
+};
+
+function elapsedSince(startedAt: string | null, now: number): string {
+  if (!startedAt) return "";
+  const seconds = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
 }
 
 export default function AdminPage() {
@@ -42,6 +70,59 @@ export default function AdminPage() {
   const [failedTotal, setFailedTotal] = useState(0);
   const [loadingFailed, setLoadingFailed] = useState(true);
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [collectiveExport, setCollective] = useState(false);
+  const [runningTasks, setRunningTasks] = useState<RunningTask[]>([]);
+  const [loadingRunning, setLoadingRunning] = useState(true);
+  const [stopping, setStopping] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+  const [targetInput, setTargetInput] = useState(String(getFollowerTargetM()));
+
+  useEffect(() => {
+    setCollective(getCollectiveExport());
+  }, []);
+
+  const handleTargetChange = (value: string) => {
+    setTargetInput(value);
+    const parsed = parseFloat(value);
+    if (Number.isFinite(parsed) && parsed > 0) setFollowerTargetM(parsed);
+  };
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const result = await getRunningTasksAction();
+      if (!cancelled && !("error" in result)) {
+        setRunningTasks(result.tasks as RunningTask[]);
+        setLoadingRunning(false);
+      }
+    })();
+    const poll = setInterval(() => {
+      void getRunningTasksAction().then((result) => {
+        if (!("error" in result)) setRunningTasks(result.tasks as RunningTask[]);
+      });
+    }, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+    };
+  }, []);
+
+  const handleStopTask = async (runId: string) => {
+    setStopping(runId);
+    await stopExtractionAction(runId);
+    setRunningTasks((prev) => prev.filter((t) => t.runId !== runId));
+    setStopping(null);
+  };
+
+  const handleCollectiveToggle = (v: boolean) => {
+    setCollective(v);
+    setCollectiveExport(v);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -107,9 +188,110 @@ export default function AdminPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {profiles.length} profiles &middot; {totalFollowers.toLocaleString()} total followers
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Zap className="h-4 w-4" />
+            Active Extraction Sessions
+            {runningTasks.length > 0 && (
+              <Badge className="ml-1 bg-amber-500 text-xs">{runningTasks.length} running</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loadingRunning ? (
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Checking active sessions...
+            </div>
+          ) : runningTasks.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No extraction sessions running.</p>
+          ) : (
+            <div className="space-y-2">
+              {runningTasks.map((t) => (
+                <div
+                  key={t.runId}
+                  className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 p-3 dark:bg-amber-950/10"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-600" />
+                      <span className="font-medium text-sm">@{t.profileUsername}</span>
+                      <Badge variant="outline" className="border-amber-300 text-amber-600 text-xs">
+                        running
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3 text-muted-foreground text-xs">
+                      <span>Started {elapsedSince(t.startedAt, now)} ago</span>
+                      {t.batchId && <span className="font-mono">batch {t.batchId.slice(0, 8)}</span>}
+                      <span className="font-mono">run {t.runId.slice(0, 8)}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={stopping === t.runId}
+                    onClick={() => handleStopTask(t.runId)}
+                  >
+                    {stopping === t.runId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                    <span className="ml-1">Stop</span>
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Wrench className="h-4 w-4" />
+            Developer Settings
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="font-medium text-sm">Collective CSV export</p>
+              <p className="text-muted-foreground text-xs">
+                When enabled, the Export CSV button on the Followers page downloads all followers across every profile.
+                When disabled, it only includes the first profile's followers.
+              </p>
+            </div>
+            <Switch
+              checked={collectiveExport}
+              onCheckedChange={handleCollectiveToggle}
+              aria-label="Collective CSV export"
+            />
+          </div>
+
+          <div className="mt-5 flex items-center justify-between gap-4 border-t pt-5">
+            <div className="space-y-1">
+              <p className="font-medium text-sm">Follower target (millions)</p>
+              <p className="text-muted-foreground text-xs">
+                The celebration target shown on the Followers page. Accepts a float, e.g. 16 or 16.5.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0.1}
+                step={0.1}
+                value={targetInput}
+                onChange={(e) => handleTargetChange(e.target.value)}
+                className="h-9 w-28 text-right"
+                aria-label="Follower target in millions"
+              />
+              <span className="text-muted-foreground text-xs">M</span>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
@@ -122,12 +304,12 @@ export default function AdminPage() {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading profiles...
             </div>
           ) : profiles.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No profiles extracted yet.</p>
+            <p className="text-muted-foreground text-sm">No profiles extracted yet.</p>
           ) : (
             <div className="space-y-2">
               {profiles.map((p) => (
@@ -146,7 +328,7 @@ export default function AdminPage() {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-3 text-muted-foreground text-xs">
                       <span>{p.followerCount.toLocaleString()} followers</span>
                       {p.lastScrapedAt && <span>Last scraped: {new Date(p.lastScrapedAt).toLocaleDateString()}</span>}
                     </div>
@@ -184,52 +366,75 @@ export default function AdminPage() {
         </CardHeader>
         <CardContent>
           {loadingFailed ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 text-muted-foreground text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />
               Loading failed tasks...
             </div>
           ) : failedTasks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No failed extractions.</p>
+            <p className="text-muted-foreground text-sm">No failed extractions.</p>
           ) : (
-            <div className="space-y-2">
-              {failedTasks.map((t) => (
-                <div
-                  key={t.runId}
-                  className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 p-3"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-sm">@{t.profileUsername}</span>
-                      {t.errorType && (
-                        <Badge variant="outline" className="border-red-300 text-red-600 text-xs">
-                          {t.errorType}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-red-700 truncate max-w-md">{t.error}</p>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span>
-                        {t.totalFetched} of {t.estimatedTotal} followers
-                      </span>
-                      <span>Failed: {new Date(t.completedAt).toLocaleDateString()}</span>
-                      <span>Created: {new Date(t.createdAt).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={retrying === t.runId}
-                    onClick={() => handleRetry(t.runId)}
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(
+                  failedTasks.reduce<Record<string, number>>((acc, t) => {
+                    const key = t.errorType ?? "UNKNOWN";
+                    acc[key] = (acc[key] ?? 0) + 1;
+                    return acc;
+                  }, {}),
+                ).map(([type, count]) => (
+                  <Badge key={type} variant="outline" className="border-red-300 text-red-600 text-xs">
+                    {ERROR_TYPE_LABELS[type] ?? type}: {count}
+                  </Badge>
+                ))}
+              </div>
+              <div className="space-y-2">
+                {failedTasks.map((t) => (
+                  <div
+                    key={t.runId}
+                    className="flex items-start justify-between gap-3 rounded-md border border-red-200 bg-red-50 p-3"
                   >
-                    {retrying === t.runId ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                    <span className="ml-1">Retry</span>
-                  </Button>
-                </div>
-              ))}
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm">@{t.profileUsername}</span>
+                        {t.errorType && (
+                          <Badge variant="outline" className="border-red-300 text-red-600 text-xs">
+                            {ERROR_TYPE_LABELS[t.errorType] ?? t.errorType}
+                          </Badge>
+                        )}
+                      </div>
+                      {t.error && <p className="break-words text-red-700 text-xs">{t.error}</p>}
+                      <div className="flex flex-wrap items-center gap-3 text-muted-foreground text-xs">
+                        {t.startedAt && (
+                          <span>
+                            Ran{" "}
+                            {Math.max(
+                              0,
+                              Math.floor((new Date(t.completedAt).getTime() - new Date(t.startedAt).getTime()) / 1000),
+                            )}
+                            s
+                          </span>
+                        )}
+                        <span>Failed {new Date(t.completedAt).toLocaleDateString()}</span>
+                        <span className="font-mono">run {t.runId.slice(0, 8)}</span>
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={retrying === t.runId}
+                      onClick={() => handleRetry(t.runId)}
+                    >
+                      {retrying === t.runId ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                      <span className="ml-1">Retry</span>
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </CardContent>

@@ -130,6 +130,18 @@ export async function getFailedTasks(page = 0, pageSize = 20): Promise<{ tasks: 
   return { tasks, total };
 }
 
+export async function getRunningTasks(
+  limit = 20,
+): Promise<Array<{ runId: string; profileUsername: string; batchId?: string; startedAt: Date | null }>> {
+  const col = await getTasksCol();
+  return col
+    .find({ status: "running" })
+    .sort({ startedAt: -1 })
+    .limit(limit)
+    .project({ runId: 1, profileUsername: 1, batchId: 1, startedAt: 1 })
+    .toArray() as any;
+}
+
 export async function retryFailedTask(runId: string): Promise<boolean> {
   const col = await getTasksCol();
   const result = await col.updateOne(

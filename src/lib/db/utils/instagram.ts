@@ -179,11 +179,27 @@ export async function markProfileInvalid(profileUsername: string): Promise<void>
 
 export async function getScrapedSources(
   limit = 10,
-): Promise<Array<{ profileUsername: string; followerCount: number; profilePicUrl?: string; isPrivate?: boolean }>> {
+  sort: "fresh" | "followers" | "followers-asc" = "followers",
+): Promise<
+  Array<{
+    profileUsername: string;
+    followerCount: number;
+    profilePicUrl?: string;
+    isPrivate?: boolean;
+    isInvalid?: boolean;
+    lastScrapedAt?: Date | null;
+  }>
+> {
   const col = await getFollowersCol();
+  const sortStage =
+    sort === "fresh"
+      ? { lastScrapedAt: -1, followerCount: -1 }
+      : sort === "followers-asc"
+        ? { followerCount: 1, lastScrapedAt: -1 }
+        : { followerCount: -1, lastScrapedAt: -1 };
   const pipeline = [
     { $group: { _id: "$sourceProfileUsername", followerCount: { $sum: 1 } } },
-    { $sort: { followerCount: -1 } },
+    { $sort: sortStage },
     { $limit: limit },
     {
       $lookup: {
@@ -201,6 +217,7 @@ export async function getScrapedSources(
         profilePicUrl: { $ifNull: ["$profile.profilePicUrl", null] },
         isPrivate: { $ifNull: ["$profile.isPrivate", false] },
         isInvalid: { $ifNull: ["$profile.isInvalid", false] },
+        lastScrapedAt: { $ifNull: ["$profile.lastScrapedAt", null] },
       },
     },
   ];
@@ -260,7 +277,7 @@ export async function getProfilesWithStats(): Promise<
   }>
 > {
   const followers = await getFollowersCol();
-  const profiles = await getTargetProfilesCol();
+  const _profiles = await getTargetProfilesCol();
 
   const pipeline = [
     {
