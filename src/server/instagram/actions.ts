@@ -32,7 +32,59 @@ export async function startCookieExtractionAction(cookiesJson: string, usernames
       runId,
       userId: sesh.user.id,
       cookies: cookiesStr,
+      kind: "followers",
       profileUsername: username,
+      maxPages,
+      batchId,
+    });
+  }
+
+  startWorkerLoop();
+
+  return { batchId, runIds, count: runIds.length };
+}
+
+export async function startCommentsExtractionAction(
+  cookiesJson: string,
+  shortcodes: string[],
+  sourceUsername?: string,
+  maxPages?: number,
+) {
+  const auth = await getAuth();
+  const sesh = await auth.api.getSession({ headers: await headers() });
+  if (!sesh) return { error: "Unauthorized" };
+
+  let cookies: any[];
+  try {
+    cookies = JSON.parse(cookiesJson);
+    if (!Array.isArray(cookies)) throw new Error();
+  } catch {
+    return { error: "Invalid cookie JSON — expected an array" };
+  }
+
+  const { parseShortcodes } = await import("./comments-extractor");
+  const parsed = parseShortcodes(shortcodes.join(" "));
+  if (parsed.length === 0) return { error: "No valid Instagram post/reel shortcodes found" };
+
+  const { randomUUID } = await import("node:crypto");
+  const { createTask } = await import("@/lib/db/utils/extraction-task");
+  const { startWorkerLoop } = await import("./worker-pool");
+
+  const batchId = randomUUID();
+  const runIds: string[] = [];
+  const cookiesStr = JSON.stringify(cookies);
+
+  for (const shortcode of parsed) {
+    const runId = randomUUID();
+    runIds.push(runId);
+    await createTask({
+      runId,
+      userId: sesh.user.id,
+      cookies: cookiesStr,
+      kind: "comments",
+      profileUsername: shortcode,
+      mediaShortcodes: [shortcode],
+      sourceUsername: sourceUsername ?? undefined,
       maxPages,
       batchId,
     });
@@ -183,6 +235,95 @@ export async function exportFollowersCSVChunkAction(
 export async function getAllDistinctSourceProfilesAction(): Promise<string[]> {
   const { getAllDistinctSourceProfiles } = await import("@/lib/db/utils/instagram");
   return getAllDistinctSourceProfiles();
+}
+
+export async function getHarvestSourcesAction(limit = 50) {
+  const { getHarvestSources } = await import("@/lib/db/utils/harvested-profiles");
+  const sources = await getHarvestSources(limit);
+  return sources.map((s) => ({
+    sourceKey: s.sourceKey,
+    profileCount: s.profileCount,
+    lastHarvestedAt: s.lastHarvestedAt instanceof Date ? s.lastHarvestedAt.toISOString() : String(s.lastHarvestedAt),
+  }));
+}
+
+export async function getHarvestShortcodesAction(limit = 50) {
+  const { getHarvestShortcodes } = await import("@/lib/db/utils/harvested-profiles");
+  const shortcodes = await getHarvestShortcodes(limit);
+  return shortcodes.map((s) => ({
+    shortcode: s.shortcode,
+    profileCount: s.profileCount,
+    lastHarvestedAt: s.lastHarvestedAt instanceof Date ? s.lastHarvestedAt.toISOString() : String(s.lastHarvestedAt),
+  }));
+}
+
+export async function getHarvestedProfilesAction(
+  filter: { sourceKey?: string; shortcode?: string },
+  page = 0,
+  pageSize = 100,
+) {
+  const { getHarvestedProfiles } = await import("@/lib/db/utils/harvested-profiles");
+  const result = await getHarvestedProfiles(filter, pageSize, page * pageSize);
+  return {
+    profiles: result.profiles.map((p) => ({
+      sourceKey: p.sourceKey,
+      shortcode: p.shortcode,
+      mediaId: p.mediaId,
+      username: p.username,
+      fullName: p.fullName ?? null,
+      avatarUrl: p.avatarUrl ?? null,
+      isVerified: p.isVerified ?? false,
+      isPrivate: p.isPrivate ?? false,
+      firstSeenAt: p.firstSeenAt instanceof Date ? p.firstSeenAt.toISOString() : String(p.firstSeenAt),
+      lastSeenAt: p.lastSeenAt instanceof Date ? p.lastSeenAt.toISOString() : String(p.lastSeenAt),
+      appearanceCount: p.appearanceCount,
+    })),
+    total: result.total,
+  };
+}
+
+export async function exportHarvestCSVAction(
+  filter: { sourceKey?: string; shortcode?: string } = {},
+): Promise<{ total: number }> {
+  const { getHarvestedProfiles } = await import("@/lib/db/utils/harvested-profiles");
+  const { total } = await getHarvestedProfiles(filter, 1, 0);
+  return { total };
+}
+
+export async function exportHarvestCSVChunkAction(
+  filter: { sourceKey?: string; shortcode?: string } = {},
+  page = 0,
+  chunkSize = 50000,
+): Promise<{ csv: string; page: number; isLast: boolean }> {
+  const { getHarvestedProfiles } = await import("@/lib/db/utils/harvested-profiles");
+  const { profiles, total } = await getHarvestedProfiles(filter, chunkSize, page * chunkSize);
+  const rows = profiles.map((p) => p.username);
+  const csv = page === 0 ? ["username", ...rows].join("\n") : rows.join("\n");
+  return { csv, page, isLast: page * chunkSize + profiles.length >= total };
+}
+
+export async function getHarvestLogsAction(runIds: string[], limitPerRun = 50) {
+  const { getHarvestLogsForRuns } = await import("@/lib/db/utils/harvest-log");
+  const logs = await getHarvestLogsForRuns(runIds, limitPerRun);
+  const result: Record<string, unknown[]> = {};
+  for (const [runId, entries] of Object.entries(logs)) {
+    result[runId] = entries.map((e) => ({
+      ts: e.ts instanceof Date ? e.ts.toISOString() : String(e.ts),
+      kind: e.kind,
+      shortcode: e.shortcode,
+      mediaId: e.mediaId ?? null,
+      url: e.url ?? null,
+      params: e.params ?? null,
+      status: e.status ?? null,
+      body: e.body ?? null,
+      nextMaxId: e.nextMaxId ?? null,
+      hasMore: e.hasMore ?? null,
+      commentersCount: e.commentersCount ?? null,
+      error: e.error ?? null,
+      durationMs: e.durationMs ?? null,
+    }));
+  }
+  return result;
 }
 
 export async function getProfilesWithStatsAction() {

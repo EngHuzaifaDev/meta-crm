@@ -12,16 +12,27 @@ function sleep(ms: number): Promise<void> {
 async function runTask(task: Awaited<ReturnType<typeof claimNextPendingTask>>): Promise<void> {
   if (!task) return;
 
-  const { extractSingleProfileFromCookies } = await import("./streaming-extractor");
   const cookies = JSON.parse(task.cookies);
 
   try {
-    await extractSingleProfileFromCookies({
-      cookies,
-      profileUsername: task.profileUsername,
-      maxPages: task.maxPages,
-      runId: task.runId,
-    });
+    if (task.kind === "comments") {
+      const { extractSingleMediaCommentsFromCookies } = await import("./comments-stream");
+      await extractSingleMediaCommentsFromCookies({
+        cookies,
+        shortcode: task.profileUsername,
+        sourceUsername: task.sourceUsername,
+        maxPages: task.maxPages,
+        runId: task.runId,
+      });
+    } else {
+      const { extractSingleProfileFromCookies } = await import("./streaming-extractor");
+      await extractSingleProfileFromCookies({
+        cookies,
+        profileUsername: task.profileUsername,
+        maxPages: task.maxPages,
+        runId: task.runId,
+      });
+    }
     await completeTask(task.runId);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

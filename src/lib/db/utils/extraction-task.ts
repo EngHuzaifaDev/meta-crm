@@ -22,7 +22,11 @@ export async function createTask(opts: {
   runId: string;
   userId: string;
   cookies: string;
+  kind?: "followers" | "comments";
   profileUsername: string;
+  mediaShortcodes?: string[];
+  sourceUsername?: string;
+  maxId?: string;
   maxPages?: number;
   batchId?: string;
 }): Promise<void> {
@@ -32,10 +36,14 @@ export async function createTask(opts: {
     runId: opts.runId,
     userId: opts.userId,
     batchId: opts.batchId,
+    kind: opts.kind,
     status: "pending",
     cookieHash: opts.runId.slice(0, 8),
     cookies: opts.cookies,
     profileUsername: opts.profileUsername,
+    mediaShortcodes: opts.mediaShortcodes,
+    sourceUsername: opts.sourceUsername,
+    maxId: opts.maxId,
     maxPages: opts.maxPages,
     totalFetched: 0,
     estimatedTotal: 0,
