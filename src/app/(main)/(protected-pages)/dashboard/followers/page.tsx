@@ -2,7 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { ChevronDown, ChevronRight, Download, ExternalLink, Loader2, Lock, Search, Users } from "lucide-react";
+import {
+  BadgeCheck,
+  ChevronDown,
+  ChevronRight,
+  Download,
+  ExternalLink,
+  Loader2,
+  Lock,
+  MessageSquare,
+  Search,
+  Users,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +25,8 @@ import { getCollectiveExport, getFollowerTargetM } from "@/lib/dev-settings";
 import {
   exportFollowersCSVAction,
   exportFollowersCSVChunkAction,
+  getHarvestedProfilesAction,
+  getHarvestSourcesAction,
   getScrapedSourcesAction,
 } from "@/server/instagram/actions";
 
@@ -26,9 +39,26 @@ interface SourceProfile {
   lastScrapedAt?: Date | string | null;
 }
 
+interface HarvestedProfile {
+  username: string;
+  fullName: string | null;
+  avatarUrl: string | null;
+  sourceKey: string;
+  shortcode: string;
+  isVerified: boolean;
+  isPrivate: boolean;
+  lastSeenAt: string;
+}
+
+interface HarvestSource {
+  sourceKey: string;
+  profileCount: number;
+}
+
 type SortKey = "fresh" | "followers" | "followers-asc";
 
 const PAGE_STEP = 30;
+const HARVEST_PAGE_SIZE = 100;
 
 const TIERS = [
   { key: "1m", label: "1M+ followers", min: 1_000_000 },
@@ -40,6 +70,17 @@ const TIERS = [
 
 function formatM(millions: number): string {
   return `${millions}M`;
+}
+
+function Avatar({ avatarUrl, username }: { avatarUrl?: string | null; username: string }) {
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt={`@${username}`} className="h-14 w-14 rounded-full object-cover" />;
+  }
+  return (
+    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted font-semibold text-lg text-muted-foreground uppercase">
+      {username.slice(0, 1)}
+    </div>
+  );
 }
 
 function Hero({ total, targetM }: { total: number; targetM: number }) {
@@ -96,23 +137,6 @@ function Hero({ total, targetM }: { total: number; targetM: number }) {
   );
 }
 
-function Avatar({ profile }: { profile: SourceProfile }) {
-  if (profile.profilePicUrl) {
-    return (
-      <img
-        src={profile.profilePicUrl}
-        alt={`@${profile.profileUsername}`}
-        className="h-14 w-14 rounded-full object-cover"
-      />
-    );
-  }
-  return (
-    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted font-semibold text-lg text-muted-foreground uppercase">
-      {profile.profileUsername.slice(0, 1)}
-    </div>
-  );
-}
-
 export default function FollowersPage() {
   const [profiles, setProfiles] = useState<SourceProfile[]>([]);
   const [total, setTotal] = useState(0);
@@ -126,6 +150,14 @@ export default function FollowersPage() {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [collectiveExport, setCollective] = useState(false);
   const [targetM, setTargetM] = useState(16);
+
+  const [harvested, setHarvested] = useState<HarvestedProfile[]>([]);
+  const [harvestTotal, setHarvestTotal] = useState(0);
+  const [harvestSources, setHarvestSources] = useState<HarvestSource[]>([]);
+  const [harvestSource, setHarvestSource] = useState("all");
+  const [harvestSearch, setHarvestSearch] = useState("");
+  const [harvestPage, setHarvestPage] = useState(0);
+  const [harvestLoading, setHarvestLoading] = useState(true);
 
   useEffect(() => {
     setCollective(getCollectiveExport());
@@ -149,6 +181,35 @@ export default function FollowersPage() {
     exportFollowersCSVAction()
       .then(({ total: t }) => setCumulativeFollowers(t))
       .catch(() => undefined);
+  }, []);
+
+  const loadHarvested = useCallback(async (nextPage: number, append: boolean, src: string) => {
+    setHarvestLoading(true);
+    const sourceKey = src === "all" ? undefined : src;
+    const res = await getHarvestedProfilesAction({ sourceKey }, nextPage, HARVEST_PAGE_SIZE);
+    const rows: HarvestedProfile[] = res.profiles.map((p) => ({
+      username: p.username,
+      fullName: p.fullName,
+      avatarUrl: p.avatarUrl,
+      sourceKey: p.sourceKey,
+      shortcode: p.shortcode,
+      isVerified: p.isVerified,
+      isPrivate: p.isPrivate,
+      lastSeenAt: p.lastSeenAt,
+    }));
+    setHarvested((prev) => (append ? [...prev, ...rows] : rows));
+    setHarvestTotal(res.total);
+    setHarvestLoading(false);
+  }, []);
+
+  useEffect(() => {
+    loadHarvested(0, false, harvestSource).catch(() => setHarvestLoading(false));
+  }, [loadHarvested, harvestSource]);
+
+  useEffect(() => {
+    getHarvestSourcesAction(50)
+      .then(setHarvestSources)
+      .catch(() => setHarvestSources([]));
   }, []);
 
   const handleExport = async () => {
@@ -200,6 +261,12 @@ export default function FollowersPage() {
       return next;
     });
   };
+
+  const filteredHarvested = useMemo(
+    () =>
+      harvested.filter((p) => (harvestSearch ? p.username.toLowerCase().includes(harvestSearch.toLowerCase()) : true)),
+    [harvested, harvestSearch],
+  );
 
   return (
     <div className="space-y-6 p-6">
@@ -294,7 +361,7 @@ export default function FollowersPage() {
                               rel="noopener noreferrer"
                               className="flex min-w-0 flex-1 items-center gap-3"
                             >
-                              <Avatar profile={p} />
+                              <Avatar avatarUrl={p.profilePicUrl} username={p.profileUsername} />
                               <div className="min-w-0 flex-1">
                                 <p className="flex items-center gap-1.5 truncate font-medium text-sm">
                                   @{p.profileUsername}
@@ -331,6 +398,112 @@ export default function FollowersPage() {
             <div className="flex justify-center pt-2">
               <Button variant="outline" onClick={() => setLimit((l) => l + PAGE_STEP)} disabled={loading}>
                 {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Load more
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="h-5 w-5" />
+            Harvested from Comments
+            <Badge variant="secondary" className="ml-2">
+              {harvestTotal} profiles
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search username..."
+                value={harvestSearch}
+                onChange={(e) => setHarvestSearch(e.target.value)}
+                className="h-9 w-56"
+              />
+            </div>
+            <Select
+              value={harvestSource}
+              onValueChange={(v) => {
+                setHarvestSource(v);
+                setHarvestPage(0);
+              }}
+            >
+              <SelectTrigger className="h-9 w-52">
+                <SelectValue placeholder="Source" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sources</SelectItem>
+                {harvestSources.map((s) => (
+                  <SelectItem key={s.sourceKey} value={s.sourceKey}>
+                    {s.sourceKey} ({s.profileCount})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {harvestLoading && harvested.length === 0 ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : filteredHarvested.length === 0 ? (
+            <p className="py-12 text-center text-muted-foreground text-sm">No harvested profiles found</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {filteredHarvested.map((p) => (
+                <div
+                  key={`${p.shortcode}-${p.username}`}
+                  className="group flex items-center gap-3 rounded-xl border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-accent/40"
+                >
+                  <a
+                    href={`https://www.instagram.com/${p.username}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex min-w-0 flex-1 items-center gap-3"
+                  >
+                    <Avatar avatarUrl={p.avatarUrl} username={p.username} />
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 truncate font-medium text-sm">
+                        @{p.username}
+                        {p.isVerified && <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-sky-500" />}
+                        {p.isPrivate && <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                      </p>
+                      <p className="truncate text-muted-foreground text-xs">{p.fullName ?? "—"}</p>
+                      <p className="truncate text-[10px] text-muted-foreground">
+                        from {p.sourceKey} &middot; seen {new Date(p.lastSeenAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </a>
+                  <a
+                    href={`https://www.instagram.com/p/${p.shortcode}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0"
+                  >
+                    <ExternalLink className="h-4 w-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {harvestTotal > harvested.length && (
+            <div className="flex justify-center pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const next = harvestPage + 1;
+                  setHarvestPage(next);
+                  loadHarvested(next, true, harvestSource).catch(() => undefined);
+                }}
+                disabled={harvestLoading}
+              >
+                {harvestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Load more
               </Button>
             </div>

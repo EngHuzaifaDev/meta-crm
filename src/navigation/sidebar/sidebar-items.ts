@@ -57,12 +57,6 @@ export const sidebarItems: NavGroup[] = [
         icon: MessageSquare,
       },
       {
-        id: "harvested",
-        title: "Harvested Profiles",
-        url: "/dashboard/harvested",
-        icon: Users,
-      },
-      {
         id: "followers",
         title: "Followers",
         url: "/dashboard/followers",
