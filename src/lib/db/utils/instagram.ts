@@ -78,6 +78,7 @@ export async function upsertFollower(
 export async function bulkUpsertFollowers(
   sourceProfileUsername: string,
   followers: Array<{ followerUsername: string; displayName?: string; avatarUrl?: string }>,
+  sourceType: "followers" | "comments" = "followers",
 ): Promise<{ upserted: number; matched: number }> {
   const col = await getFollowersCol();
   const now = new Date();
@@ -87,6 +88,7 @@ export async function bulkUpsertFollowers(
       update: {
         $set: {
           lastSeenAt: now,
+          sourceType,
           ...(f.displayName !== undefined && { followerDisplayName: f.displayName }),
           ...(f.avatarUrl !== undefined && { followerAvatarUrl: f.avatarUrl }),
         },

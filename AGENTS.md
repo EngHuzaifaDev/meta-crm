@@ -38,9 +38,15 @@ Path alias `@/*` → `src/*`.
 |------|---------|
 | `cookie-session.ts` | Cookie parsing + Instagram header construction |
 | `graphql-extractor.ts` | Profile info resolution, GraphQL pagination, follower extraction (all cookie-based) |
+| `comments-extractor.ts` | Comments channel: base62 shortcode decode, media info resolve, `api/v1/media/{id}/comments/` pagination (web REST + mobile fallback) |
+| `comments-stream.ts` | Comments channel orchestrator — batch upserts (`sourceType: "comments"`), progress events, stop signal |
 | `proxy-helper.ts` | ProxyAgent via undici, IP verification (`api.ip.cc`), `proxyFetch()` wrapper |
 | `streaming-extractor.ts` | Multi-profile streaming extraction with progress callbacks, DB upsert |
 | `actions.ts` | Server actions: start/poll/stop extraction, CSV export, scraped sources list |
+
+### Extraction Channels
+- **Followers channel** (`kind: "followers"`): cookie-based GraphQL pagination of `edge_followed_by`, upserted under the target profile username (`sourceType: "followers"`).
+- **Comments channel** (`kind: "comments"`, `/dashboard/comments`): harvests commenter usernames from post/reel URLs or shortcodes, upserted under the media owner's username (`sourceType: "comments"`). Shortcodes are decoded to media IDs locally (base62), so no resolution request is needed. Cursor (`max_id`) is media-scoped, session-independent. Owner resolution via `api/v1/media/{id}/info/`; fallback source key `media_{shortcode}` when owner unknown.
 | `progress-store.ts` | In-memory run state (create, poll, stop) |
 
 ### Extraction Flow

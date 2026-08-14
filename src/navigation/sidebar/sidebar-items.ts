@@ -1,5 +1,4 @@
-import { Cookie, type LucideIcon, Shield, Users } from "lucide-react";
-
+import { Cookie, type LucideIcon, MessageSquare, Shield, Users } from "lucide-react";
 export type NavBadge = "new" | "soon";
 
 export interface NavSubItem {
@@ -50,6 +49,18 @@ export const sidebarItems: NavGroup[] = [
         title: "Cookie Extraction",
         url: "/dashboard/cookie-extraction",
         icon: Cookie,
+      },
+      {
+        id: "comments",
+        title: "Comments Harvest",
+        url: "/dashboard/comments",
+        icon: MessageSquare,
+      },
+      {
+        id: "harvested",
+        title: "Harvested Profiles",
+        url: "/dashboard/harvested",
+        icon: Users,
       },
       {
         id: "followers",

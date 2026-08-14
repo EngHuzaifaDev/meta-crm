@@ -17,19 +17,62 @@ export interface InstagramFollowerRecord {
   followerUsername: string;
   followerDisplayName?: string;
   followerAvatarUrl?: string;
+  sourceType?: "followers" | "comments";
   firstSeenAt: Date;
   lastSeenAt: Date;
   appearanceCount: number;
+}
+
+export interface InstagramHarvestedProfile {
+  _id?: string;
+  sourceKey: string;
+  shortcode: string;
+  mediaId: string;
+  username: string;
+  fullName?: string;
+  avatarUrl?: string;
+  isVerified?: boolean;
+  isPrivate?: boolean;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  appearanceCount: number;
+}
+
+export interface HarvestLogEntry {
+  ts: Date;
+  kind: "media_info" | "comments_page" | "error";
+  shortcode: string;
+  mediaId?: string;
+  url?: string;
+  params?: Record<string, unknown>;
+  status?: number;
+  body?: string;
+  nextMaxId?: string | null;
+  hasMore?: boolean;
+  commentersCount?: number;
+  error?: string;
+  durationMs?: number;
+}
+
+export interface InstagramHarvestLogRun {
+  _id?: string;
+  runId: string;
+  entries: HarvestLogEntry[];
+  updatedAt: Date;
 }
 
 export interface ExtractionTask {
   runId: string;
   userId: string;
   batchId?: string;
+  kind?: "followers" | "comments";
   status: "pending" | "running" | "done" | "failed" | "stopped";
   cookieHash: string;
   cookies: string;
   profileUsername: string;
+  mediaShortcodes?: string[];
+  sourceUsername?: string;
+  maxId?: string;
   maxPages?: number;
   totalFetched: number;
   estimatedTotal: number;
